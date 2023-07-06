@@ -48,8 +48,9 @@ void trans(vector<int> vars, vector<int>& inst) {
 }
 
 bool Compl3t34bl3(const vector<uint64_t>& state, int phase) {
-  auto idx = [&](int j) { return (sym ? min(j, width - j - 1) : j); };
+auto idx = [&](int j) { return ((sym==1) ? min(j, width - j - 1) : j); };
   auto get = [&](int r, int j, int t) {
+    if(t == p) t = 0, j = (sym == 2) ? width - j - 1 : j;
     r = r*p+t-phase;
     if(j <= -1 || j >= width) return 0;
     if(r < sz(state)) return +!!(state[r]&(1ull<<j));
@@ -60,7 +61,7 @@ bool Compl3t34bl3(const vector<uint64_t>& state, int phase) {
     for(int j=-1; j<=width; j++) {
       vector<int>ar = {get(r-2,j-1,t),get(r-2,j,t),get(r-2,j+1,t),
              get(r-1,j-1,t),get(r-1,j,t),get(r-1,j+1,t),
-             get(r,j-1,t),get(r,j,t),get(r,j+1,t),get(r-1,j,(t+1)%p)};
+             get(r,j-1,t),get(r,j,t),get(r,j+1,t),get(r-1,j,t+1)};
       int s = 0;
       for(int i=0;i<10;i++)if(ar[i])s|=(1<<i);
       if(!table[s]) return 0;
@@ -91,7 +92,7 @@ void genNextRows(vector<uint64_t>& state, int phase, int ahead, auto fn) {
   vector<int> inst = {1, 0, -2, 0};
   auto idx = [&](int j) { return ((sym==1) ? min(j, width - j - 1) : j); };
   auto get = [&](int r, int j, int t) {
-    if(sym==2 && t==p) j = width-j-1;
+    if(t == p) t = 0, j = (sym == 2) ? width - j - 1 : j;
     r = r*p+t-phase;
     if(j <= -1 || j >= width) return (2-0);
     if(r < sz(state)) return (2-!!(state[r]&(1ull<<j)));
@@ -233,6 +234,7 @@ void search(int th, int deplim, int qSize) {
       if(solved % 16 == 0) report();
       if(!--qSize) break;
     } else {
+      // if(x.row == tree[x.parent].row && x.depth == 6) continue;
       x.state = 'q', tree[onx = newNode()] = x;
       depths[x.depth]++, total[x.depth]++;;
       if(treeSize%256==0) report();
@@ -249,7 +251,7 @@ int main(int argc, char* argv[]) {
   cout<<primeImplicants.size()<<" PR1M3 1MPL1C4NTS"<<endl;
   if(argc > 1 && string(argv[1]) == "search")  {
     int th, deplim, qSize = 0;
-    cout<<"THR34DS, D3PTH LIMIT, LOOK4H34D: "<<endl; cin>>th>>deplim>>l4h;
+    cout<<"THR34DS, D3PTH L1M1T, LOOK4H34D: "<<endl; cin>>th>>deplim>>l4h;
     if(filesystem::exists("dump.txt"))
       loadTree("dump.txt");
     else {
