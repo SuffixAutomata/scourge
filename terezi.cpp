@@ -89,8 +89,9 @@ void solve(vector<int>& inst, vector<int> crit, auto fn) {
 void genNextRows(vector<uint64_t>& state, int phase, int ahead, auto fn) {
   assert(p*2 == sz(state));
   vector<int> inst = {1, 0, -2, 0};
-  auto idx = [&](int j) { return (sym ? min(j, width - j - 1) : j); };
+  auto idx = [&](int j) { return ((sym==1) ? min(j, width - j - 1) : j); };
   auto get = [&](int r, int j, int t) {
+    if(sym==2 && t==p) j = width-j-1;
     r = r*p+t-phase;
     if(j <= -1 || j >= width) return (2-0);
     if(r < sz(state)) return (2-!!(state[r]&(1ull<<j)));
@@ -101,7 +102,7 @@ void genNextRows(vector<uint64_t>& state, int phase, int ahead, auto fn) {
     for(int j=-1; j<=width; j++)
       trans({get(r-2,j-1,t),get(r-2,j,t),get(r-2,j+1,t),
              get(r-1,j-1,t),get(r-1,j,t),get(r-1,j+1,t),
-             get(r,j-1,t),get(r,j,t),get(r,j+1,t),get(r-1,j,(t+1)%p)}, inst);
+             get(r,j-1,t),get(r,j,t),get(r,j+1,t),get(r-1,j,t+1)}, inst);
   }
   vector<int> crit(max(idx(width/2),idx(width-1))+1); iota(crit.begin(), crit.end(), 3);
   vector<uint64_t> bb(state.begin()+1, state.end());

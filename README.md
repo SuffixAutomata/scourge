@@ -11,7 +11,9 @@ cd ..
 g++ -o terezi terezi.cpp cadical/build/libcadical.a -O3 -lpthread -Wall -Wextra -pedantic -std=c++23
 ```
 
-Then, `./terezi search` will lead you through the rest: on the first prompt, enter the number of threads to use, the depth to search to before stopping, and the lookahead (~49 for p7, but make larger if there's too many nodes and smaller if the search is too slow) separated by a space. On the second prompt, enter the period, width, and 0/1 depending on if there's symmetry. After that, enter the 2*p rows, in ofind format, to begin the search with.
+Then, `./terezi search` will lead you through the rest: on the first prompt, enter the number of threads to use, the depth to search to before stopping, and the lookahead (~49 for p7, but make larger if there's too many nodes and smaller if the search is too slow) separated by a space. On the second prompt, enter the period, width, and symmetry. After that, enter the 2*p rows, in ofind format, to begin the search with.
+
+For the symmetry parameter, 0 = none, 1 = vertical, and 2 = glidereflect. For glidereflect, search for half the real period.
 
 Here's an example input, for discovering 754P7. (Not tested.)
 
