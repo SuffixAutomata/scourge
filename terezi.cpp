@@ -1,4 +1,4 @@
-// TODO : cycle detection ; drifting rows ; symmetries ; smart stopping
+// TODO : cycle detection ; drifting rows ; symmetries ; smart stopping ; PRUNING.
 #include <bits/stdc++.h>
 #include "cadical/src/cadical.hpp"
 #include "cqueue/bcq.h"
@@ -7,7 +7,7 @@ using namespace std;
 #define sz(x) ((int)(x.size()))
 
 int p, width, sym, l4h;
-int maxwid;
+int maxwid, stator;
 
 namespace _logic {
 vector<int> table = []() -> vector<int> { 
@@ -98,12 +98,16 @@ void genNextRows(vector<uint64_t>& state, int phase, int ahead, auto fn) {
     if(r < sz(state)) return (2-!!(state[r]&(1ull<<j)));
     return 3 + idx(j) + (int)(r-state.size())*width;
   };
+  auto eqify = [&](int i, int j) { for(int x:vector<int>{i,-j,0,-i,j,0}) inst.push_back(x); };
   for(int row=state.size(); row<sz(state)+ahead; row++){
     int r=(row+phase)/p, t=(row+phase)%p;
     for(int j=-1; j<=width; j++)
       trans({get(r-2,j-1,t),get(r-2,j,t),get(r-2,j+1,t),
              get(r-1,j-1,t),get(r-1,j,t),get(r-1,j+1,t),
              get(r,j-1,t),get(r,j,t),get(r,j+1,t),get(r-1,j,t+1)}, inst);
+    if(t != p-1) for(int j=0; j<width; j++)
+      if(j < stator || width - j <= stator)
+        eqify(get(r, j, t), get(r, j, t+1));
   }
   vector<int> crit(max(idx(width/2),idx(width-1))+1); iota(crit.begin(), crit.end(), 3);
   vector<uint64_t> bb(state.begin()+1, state.end());
@@ -124,7 +128,7 @@ int treeSize = 0, treeAlloc = 16777216;
 
 void dumpTree(string fn) {
   ofstream fx(fn);
-  fx<<p<<'.'<<width<<'.'<<sym<<'.'<<"period.width.sym"<<'\n';  
+  fx<<p<<'.'<<width<<'.'<<sym<<'.'<<stator<<'.'<<"period.width.sym.stator"<<'\n';  
   fx<<treeSize<<'\n';
   for(int i=0;i<treeSize;i++)fx<<tree[i].row<<' '<<tree[i].shift<<' '<<tree[i].parent<<' '<<tree[i].state<<'\n';
   fx.flush(); fx.close();
@@ -133,8 +137,11 @@ void dumpTree(string fn) {
 void loadTree(string fn) {
   ifstream fx(fn);
   string s; fx>>s; for(char&c:s) if(c=='.') c=' ';
-  istringstream gx(s);
-  gx>>p>>width>>sym;
+  istringstream gx(s); vector<string> keys; map<string, string> altkeys; 
+  string key; while(gx >> key) keys.push_back(key);
+  for(int i=0; i<keys.size()/2; i++) altkeys[keys[i+keys.size()/2]] = keys[i];
+  p = stoi(altkeys["period"]); width = stoi(altkeys["width"]); sym = stoi(altkeys["sym"]);
+  if(altkeys.count("stator")) stator = stoi(altkeys["stator"]);
   fx>>treeSize;
   for(int i=0;i<treeSize;i++){
     fx>>tree[i].row>>tree[i].shift>>tree[i].parent>>tree[i].state;
@@ -214,31 +221,48 @@ void betaUniverse() {
   }
 }
 
-void search(int th, int deplim, int qSize) {
+void search(int th, int nodelim, int qSize) {
   int solved = 0, onx;
   vector<thread> universes;
   for(int i=0;i<th;i++) universes.emplace_back(betaUniverse);
   node x;
+  int reportidx = 0;
+  priority_queue<pair<int,int>> PQ;
   auto report = [&] {
-    cout << "[1NFO] ";
-    cout << solved << ' ' << treeSize << ' ' << qSize << ' ' << bdep<<';';
-    for(int i=2*p;i<=bdep;i++){
-      cout<<' '<<depths[i];
-      if(depths[i] != total[i])cout<<'/'<<total[i];
+    cout << "[1NFO] SOLV3D ";
+    cout << solved << "; QU3U3D " << qSize + PQ.size() << "; TOT4L " << treeSize << " NOD3S";
+    cout << endl;
+    if(reportidx % 16 == 0){
+      cout << "[1NFO] D3PTH R34CH3D "<< bdep<<" ; TR33 PROF1L3 ";
+      for(int i=2*p;i<=bdep;i++){
+        cout<<' '<<depths[i];
+        if(depths[i] != total[i])cout<<'/'<<total[i];
+      }
+      cout<<endl;
     }
-    cout<<endl;
+    reportidx++;
   };
   while(B2A.wait_dequeue(x), 1) {
     if(x.parent < 0) {
       depths[x.depth]--, solved++, tree[-x.parent].state = 'u';
+      while(PQ.size() && qSize <= 2*th && nodelim) {
+        int best = PQ.top().second; PQ.pop();
+        A2B.enqueue(best), qSize++, nodelim--;
+      }
       if(solved % 16 == 0) report();
       if(!--qSize) break;
     } else {
       // if(x.row == tree[x.parent].row && x.depth == 6) continue;
       x.state = 'q', tree[onx = newNode()] = x;
       depths[x.depth]++, total[x.depth]++;;
+      if(nodelim != 0) {
+        PQ.push({x.depth, onx});
+        while(PQ.size() && qSize <= 2*th && nodelim) {
+          int best = PQ.top().second; PQ.pop();
+          A2B.enqueue(best), qSize++, nodelim--;
+        }
+      }
       if(treeSize%256==0) report();
-      if(x.depth <= deplim) A2B.enqueue(onx), qSize++;
       emit(onx, Compl3t34bl3(getState(onx), x.depth%p));
     }
   }
@@ -250,12 +274,12 @@ void search(int th, int deplim, int qSize) {
 int main(int argc, char* argv[]) {
   cout<<primeImplicants.size()<<" PR1M3 1MPL1C4NTS"<<endl;
   if(argc > 1 && string(argv[1]) == "search")  {
-    int th, deplim, qSize = 0;
-    cout<<"THR34DS, D3PTH L1M1T, LOOK4H34D: "<<endl; cin>>th>>deplim>>l4h;
+    int th, nodelim, qSize = 0;
+    cout<<"THR34DS, NOD3 L1M1T, LOOK4H34D: "<<endl; cin>>th>>nodelim>>l4h;
     if(filesystem::exists("dump.txt"))
       loadTree("dump.txt");
     else {
-      cout<<"P3R1OD, W1DTH, SYMM3TRY: "<<endl; cin>>p>>width>>sym;
+      cout<<"P3R1OD, W1DTH, SYMM3TRY, ST4TOR W1DTH: "<<endl; cin>>p>>width>>sym>>stator;
       cout<<"F1RST "<<2*p<<" ROWS:"<<endl;
       int nx = -1, onx = -1;
       for(int i=0;i<2*p;i++){
@@ -268,11 +292,12 @@ int main(int argc, char* argv[]) {
     }
     for(int i=0; i<treeSize; i++) {
       total[tree[i].depth]++, bdep = max(bdep, tree[i].depth);
-      if(tree[i].state == 'q' && tree[i].depth <= deplim){
+      // if(tree[i].state == 'q' && tree[i].depth <= deplim){
+      if(tree[i].state == 'q'){
         A2B.enqueue(i), depths[tree[i].depth]++, qSize++;
       }
     }
-    search(th, deplim, qSize);
+    search(th, nodelim, qSize);
   } else if(argc > 1 && string(argv[1]) == "distrib") {
     bool xall = (argc > 2);
     assert(filesystem::exists("dump.txt"));
