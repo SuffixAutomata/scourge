@@ -73,6 +73,8 @@ int bddAND(int f, int g) { return bddITE(f, g, 0); }
 int bddOR(int f, int g) { return bddITE(f, 1, g); }
 
 int bddEXQUANT(int f, int x) {
+  if (x < 2)
+    return f;
   if (A[f].x == x)
     return bddOR(A[f].v[0], A[f].v[1]);
   if (A[f].x < x)
@@ -127,31 +129,47 @@ vector<string> part = {
 };
 
 int main() {
-  int width = 5, phase = 0;
-  int p, rl;
-  cin >> p >> rl >> width;
-  int k = 1;
-  auto get = [&](int r, int j) {
-    if ((r < 2 * p) || !(0 <= j && j < width))
-      return 0;
-    return r * 100000 + ((j + 600) % 3);
-  };
+  int p = 7, k = 1, rl;
+  cin >> rl;
   int bdd = 1;
-  for (int j = -1; j <= width; j++) {
-    for (int row = 2 * p; row < 2 * p + rl; row++) {
-      int x = bddBUILD({get(row - 2 * p, j - 1), get(row - 2 * p, j),
-                        get(row - 2 * p, j + 1), get(row - p, j - 1),
-                        get(row - p, j), get(row - p, j + 1), get(row, j - 1),
-                        get(row, j), get(row, j + 1), get(row - p + k, j)},
+  auto get = [&](int r, int j) {
+    if ((r < 2 * p) || (r >= 2 * p + rl))
+      return 0;
+    return 1000000 - r * 1000 - ((j + 600) % 3);
+    // return r + ((j + 600) % 3) * 100000;
+  };
+  for (int it = 0; it < p; it++) {
+    int mod = (p - k) * it % p;
+    for (int row = 2 * p + mod; row < 4 * p + rl; row += p) {
+      int x = bddBUILD({get(row - 2 * p, -1), get(row - 2 * p, 0),
+                        get(row - 2 * p, 1), get(row - p, -1), get(row - p, 0),
+                        get(row - p, 1), get(row, -1), get(row, 0), get(row, 1),
+                        get(row - (p - k), 0)},
                        table);
       bdd = bddAND(bdd, x);
-      bdd = bddEXQUANT(bdd, get(row - 2 * p, j - 1));
-      if (row + p >= 2 * p + rl) {
-        bdd = bddEXQUANT(bdd, get(row - p, j - 1));
-        bdd = bddEXQUANT(bdd, get(row, j - 1));
+      if (it) {
+        cout << row - (p - k) << ' ';
+        bdd = bddEXQUANT(bdd, get(row - (p - k), 0));
+        if (row + p >= 4 * p + rl) {
+          cout << row + k << ' ';
+          bdd = bddEXQUANT(bdd, get(row + k, 0));
+        }
       }
-      cout << bddSIZE(bdd) << endl;
+      if (it == p - 1) {
+        cout << row - 2 * p << ' ';
+        bdd = bddEXQUANT(bdd, get(row - 2 * p, 0));
+        if (row + p >= 4 * p + rl) {
+          cout << row - p << ' ';
+          cout << row << endl;
+          bdd = bddEXQUANT(bdd, get(row - p, 0));
+          bdd = bddEXQUANT(bdd, get(row, 0));
+        }
+      }
+      // cout << row << ' ' << bddSIZE(bdd) << ' ' << bdd << endl;
     }
-    cout << bddSIZE(bdd) << ' ' << bdd << endl;
   }
+  cout << bddSIZE(bdd) << ' ' << bdd << endl;
+  for (int row = 2 * p; row < 4 * p + rl; row++)
+    cout << row << ' ' << bddSIZE(bddRESTRICT(bdd, get(row, -1), 0)) << ' '
+         << bddSIZE(bddRESTRICT(bdd, get(row, -1), 1)) << endl;
 }
