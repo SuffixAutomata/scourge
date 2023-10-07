@@ -199,10 +199,7 @@ void emit(vector<uint64_t> mat){
   cout << "x = 0, y = 0, rule = B3/S23\n" + rle + '!' << endl;
 }
 
-uint64_t enforce =   0b0'000000'111111'111111'000000'0;
-uint64_t remember =    0b000001'111111'111111'100000;
-uint64_t enforce2=   0b1'111111'000000'000000'111111'1;
-uint64_t remember2=    0b111111'100000'000001'111111;
+uint64_t enforce, remember, enforce2, remember2;
 uint64_t overlap = remember & remember2;
 
 bool canMatch(int i, const vector<uint64_t>& pat, searchTree& ref, vector<int>& sol, vector<int>& lux) {
@@ -213,15 +210,17 @@ bool canMatch(int i, const vector<uint64_t>& pat, searchTree& ref, vector<int>& 
     emit(marge);
     return 1;
   }
-  if(ref.a[i].state != 'u') 
-    return ref.a[i].state == 'q';
-  int f = sol[i];
+  if(ref.a[i].state != 'u') {
+    assert(ref.a[i].state != 'd');
+    return 1;
+  }
+  int f = sol[i], ok = 0;
   while(f != -1) {
-    if((ref.a[f].row & overlap) == (pat[ref.a[i].depth] & overlap)
-      && canMatch(f, pat, ref, sol, lux)) return 1;
+    if((ref.a[f].row & overlap) == (pat[ref.a[i].depth] & overlap))
+      ok += canMatch(f, pat, ref, sol, lux);
     f = lux[f];
   }
-  return 0;
+  return ok;
 }
 
 void prune() {
@@ -295,6 +294,8 @@ void betaUniverse() {
   }
 }
 
+int rows_priority;
+
 void search(int th, int nodelim, int qSize) {
   int solved = 0, onx;
   vector<thread> universes;
@@ -307,7 +308,7 @@ void search(int th, int nodelim, int qSize) {
     cout << "[1NFO] SOLV3D ";
     cout << solved << "; QU3U3D " << qSize + PQ.size() << "; TOT4L " << tree.treeSize<<'+'<<tree2.treeSize << " NOD3S";
     cout << endl;
-    if(reportidx % 2 == 0){
+    if(reportidx % 8 == 0){
       cout << "[1NFO] D3PTH R34CH3D "<< sdep<<" ; TR33 PROF1L3";
       for(int i=2*p;i<=sdep;i++){
         if(tree.depths[i] == 0 && tree2.depths[i] == 0) cout<<" 0";
@@ -322,6 +323,7 @@ void search(int th, int nodelim, int qSize) {
     }
     reportidx++;
   };
+  mt19937 rng(720);
   while(B2A.wait_dequeue(x), 1) {
     auto& ref = x.shift ? tree2 : tree;
     if(x.parent < 0) {
@@ -333,7 +335,7 @@ void search(int th, int nodelim, int qSize) {
       // if(x.row == tree[x.parent].row && x.depth == 6) continue;
       x.state = 'q', onx = ref.newNode(x);
       // PR1OR1TY FOR TH3 1NN3R TR33
-      PQ.push({(-x.depth + (x.shift == 0 ? 3 : 0)) * 2 + rand() % 2, {x.shift, onx}});
+      PQ.push({(-x.depth + (x.shift == 0) * rows_priority) * 65536 + rng() % 65536, {x.shift, onx}});
       sdep = max(sdep, x.depth);
       // if(tree.treeSize%256==0) report();
       // emit(ref.getState(onx, 1));
@@ -359,6 +361,7 @@ int main(int argc, char* argv[]) {
       cout << "OTH3R SYMM3TR1S T3MPOR4R1LY NOT T3ST3D >:[" << endl;
     int bthh = (sym ? width/4 : width/2);
     cout<<"B1S3CT1ON THR3SHOLD: [SUGG3ST3D " << bthh << "] "<<endl; cin >> bthh;
+    cout<<"NUMB3R OF ROWS 4DV4NC3 FOR 1NN3R TR33: [0 1S OK4Y] "<<endl; cin >> rows_priority;
     for(int j=-1; j<=width; j++) {
       int s = ((sym==1) ? min(j, width - j - 1) : j);
       if(0 <= s && s < bthh + 1) remember2 |= (1ull << j);
@@ -374,6 +377,7 @@ int main(int argc, char* argv[]) {
     // enforce2=   0b1'111111'000000'000000'111111'1;
     // remember2=    0b111111'100000'000001'111111;
     // cout<<enforce<<' '<<enforce2<<' '<<remember<<' '<<remember2<<endl;
+    // return 0;
 
     overlap = remember & remember2;
 
