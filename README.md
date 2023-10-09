@@ -19,7 +19,7 @@ On the first prompt, enter the number of threads to use, the number of nodes to 
 
 On the second prompt, enter the period, width, symmetry, and stator width. The stator width is **deducted** from the total width **on both sides**.
 
-On the third and fourth prompt, follow the given instructions, or adjust as desired.
+On the third prompt, follow the given instructions, or adjust as desired.
 
 After that, enter the 2*p rows, in ofind format, to begin the search with.
 
@@ -31,7 +31,6 @@ Here's an example input, for discovering 754P7. (Not tested.)
 4 -1 49
 7 24 1 2
 6
-3
 ........................
 .........o....o.........
 ........oo....oo........

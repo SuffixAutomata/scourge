@@ -202,6 +202,36 @@ void emit(vector<uint64_t> mat){
 uint64_t enforce, remember, enforce2, remember2;
 uint64_t overlap = remember & remember2;
 
+struct horseQueue {
+  set<pair<long long,pair<int,int>>> internal;
+  vector<int> targ;
+  mt19937 rng;
+  horseQueue() : rng(720) { }
+  int size() { return internal.size(); }
+  pair<int, int> popTop() {
+    pair<int,int> val = internal.begin()->second;
+    internal.erase(internal.begin());
+    return val;
+  }
+  void push(pair<int, int> nx) {
+    auto& ref = nx.first?tree2:tree;
+    vector<uint64_t> h = ref.getState(nx.second, 1);
+    int wt = 0;
+    for(; wt<min(targ.size(), h.size() - 2 * p) && 
+      ((h[wt + 2 * p] >> __builtin_ctzll(overlap)) & 3) == targ[wt]; wt++);
+    internal.insert({(-wt) * 65536 + rng() % 65536, nx});
+  }
+  void retarg(vector<int> newtarg) {
+    // TODO: rewrite this. this ineff af
+    vector<pair<int, int>> nxs;
+    for(auto [a, b] : internal)
+      nxs.push_back(b);
+    internal.clear();
+    targ = newtarg;
+    for(auto b : nxs) push(b);
+  }
+} PQ;
+
 bool canMatch(int i, const vector<uint64_t>& pat, searchTree& ref, vector<int>& sol, vector<int>& lux) {
   if(ref.a[i].depth == pat.size()) {
     vector<uint64_t> marge = ref.getState(i, 1);
@@ -225,12 +255,6 @@ bool canMatch(int i, const vector<uint64_t>& pat, searchTree& ref, vector<int>& 
 
 void prune() {
   auto t1 = chrono::high_resolution_clock::now();
-  // map<vector<int>, int> idx1;
-  // for(int i=2*p;i<tree2.treeSize;i++)if(!tree2.shouldSkip(i)) {
-  //   auto h = tree2.getState(i, 1);
-  //   vector<int> s; for(int t=2*p; t<h.size(); t++) s.push_back((h[t]>>5)&3);
-  //   idx1[s]++;
-  // }
   // cout << "[1NFO] ";
   // for(auto& [a,b]:idx1){
   //   for(int i:a)cout<<i;
@@ -268,9 +292,38 @@ void prune() {
     for(int i=0; i < tree.treeSize; i++)
       if(!tree.shouldSkip(i)) p1++;
   }
+
+  // TODO: this ineff af asw.
+  map<vector<int>, int> a1, b1, a2, b2;
+  for(int i=2*p;i<tree.treeSize;i++)if(!tree.shouldSkip(i)) {
+    auto h = tree.getState(i, 1);
+    vector<int> s; for(int t=2*p; t<h.size(); t++) s.push_back((h[t]>>__builtin_ctzll(overlap))&3);
+    a1[s]++;
+    if(tree.a[i].state == 'q') b1[s]++;
+  }
+  a2 = a1; for(auto& [a, b]: a2) b= 0;
+  for(int i=2*p;i<tree2.treeSize;i++)if(!tree2.shouldSkip(i)) {
+    auto h = tree2.getState(i, 1);
+    vector<int> s; for(int t=2*p; t<h.size(); t++) s.push_back((h[t]>>__builtin_ctzll(overlap))&3);
+    a2[s]++;
+    if(tree2.a[i].state == 'q') b2[s]++;
+  }
+  // weight: a1 * b2 + b1 * a2. i know this counts q-q twice!!!!!!!! >:]
+  vector<int> besttarg; int bw = 0, sw = 0;
+  for(auto [targ, v] : a2) {
+    if(((sw = a1[targ] * b2[targ] + b1[targ] * v) > bw && targ.size() >= besttarg.size()) || (sw && targ.size() > besttarg.size()))
+      bw = sw, besttarg = targ;
+    // if(sw){for(int i:targ)cout<<i;
+    // cout<<' '<<sw<<endl;
+    // }
+    }
+  PQ.retarg(besttarg);
   auto t2 = chrono::high_resolution_clock::now();
   cout<<"[1NFO] PRUN1NG: "<<x1<<" -> "<<p1<<"/"<<tree.treeSize<<", "<<x2<<" -> "<<p2<<"/"<<tree2.treeSize
       <<" 1N "<<(t2-t1).count()/1000000.0<<"ms"<<endl;
+  cout << "[1NFO] N3W T4RG3T: ";
+  for(int i:besttarg)cout<<i;
+  cout<<endl;
 }
 
 moodycamel::BlockingConcurrentQueue<pair<int, int>> A2B;
@@ -294,15 +347,12 @@ void betaUniverse() {
   }
 }
 
-int rows_priority;
-
 void search(int th, int nodelim, int qSize) {
   int solved = 0, onx;
   vector<thread> universes;
   for(int i=0;i<th;i++) universes.emplace_back(betaUniverse);
   node x;
   int reportidx = 0;
-  priority_queue<pair<int,pair<int,int>>> PQ;
   int sdep = bdep;
   auto report = [&] {
     cout << "[1NFO] SOLV3D ";
@@ -323,7 +373,6 @@ void search(int th, int nodelim, int qSize) {
     }
     reportidx++;
   };
-  mt19937 rng(720);
   while(B2A.wait_dequeue(x), 1) {
     auto& ref = x.shift ? tree2 : tree;
     if(x.parent < 0) {
@@ -332,16 +381,12 @@ void search(int th, int nodelim, int qSize) {
         ref.a[-x.parent].state = 'u';
       if(solved % 16 == 0) report();
     } else {
-      // if(x.row == tree[x.parent].row && x.depth == 6) continue;
       x.state = 'q', onx = ref.newNode(x);
-      // PR1OR1TY FOR TH3 1NN3R TR33
-      PQ.push({(-x.depth + (x.shift == 0) * rows_priority) * 65536 + rng() % 65536, {x.shift, onx}});
+      PQ.push({x.shift, onx});
       sdep = max(sdep, x.depth);
-      // if(tree.treeSize%256==0) report();
-      // emit(ref.getState(onx, 1));
     }
     while(PQ.size() && qSize <= 2*th && nodelim) {
-      pair<int,int> best = PQ.top().second; PQ.pop();
+      pair<int,int> best = PQ.popTop();
       A2B.enqueue(best), qSize++, nodelim--;
     }
     if(x.parent < 0 && !qSize) break;
@@ -361,7 +406,7 @@ int main(int argc, char* argv[]) {
       cout << "OTH3R SYMM3TR1S T3MPOR4R1LY NOT T3ST3D >:[" << endl;
     int bthh = (sym ? width/4 : width/2);
     cout<<"B1S3CT1ON THR3SHOLD: [SUGG3ST3D " << bthh << "] "<<endl; cin >> bthh;
-    cout<<"NUMB3R OF ROWS 4DV4NC3 FOR 1NN3R TR33: [0 1S OK4Y] "<<endl; cin >> rows_priority;
+    // cout<<"NUMB3R OF ROWS 4DV4NC3 FOR 1NN3R TR33: [0 1S OK4Y] "<<endl; cin >> rows_priority;
     for(int j=-1; j<=width; j++) {
       int s = ((sym==1) ? min(j, width - j - 1) : j);
       if(0 <= s && s < bthh + 1) remember2 |= (1ull << j);
