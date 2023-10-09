@@ -206,12 +206,22 @@ struct horseQueue {
   set<pair<long long,pair<int,int>>> internal;
   vector<int> targ;
   mt19937 rng;
+  bool first = true;
   horseQueue() : rng(720) { }
   int size() { return internal.size(); }
-  pair<int, int> popTop() {
-    pair<int,int> val = internal.begin()->second;
-    internal.erase(internal.begin());
-    return val;
+  pair<int, int> popTop(int desired) {
+    if(desired == -1) {
+      pair<int,int> val = internal.begin()->second;
+      internal.erase(internal.begin());
+      return val;
+    } else {
+      auto it = internal.begin();
+      while(it != internal.end() && it->second.first != desired) it++;
+      if(it == internal.end()) return popTop(-1);
+      pair<int,int> val = it->second;
+      internal.erase(it);
+      return val;
+    }
   }
   void push(pair<int, int> nx) {
     auto& ref = nx.first?tree2:tree;
@@ -222,6 +232,7 @@ struct horseQueue {
     internal.insert({(-wt) * 65536 + rng() % 65536, nx});
   }
   void retarg(vector<int> newtarg) {
+    if(first) { first = false; return; }
     // TODO: rewrite this. this ineff af
     vector<pair<int, int>> nxs;
     for(auto [a, b] : internal)
@@ -386,7 +397,7 @@ void search(int th, int nodelim, int qSize) {
       sdep = max(sdep, x.depth);
     }
     while(PQ.size() && qSize <= 2*th && nodelim) {
-      pair<int,int> best = PQ.popTop();
+      pair<int,int> best = PQ.popTop((solved % 3) - 1);
       A2B.enqueue(best), qSize++, nodelim--;
     }
     if(x.parent < 0 && !qSize) break;
