@@ -1,7 +1,9 @@
 // TODO : cycle detection ; drifting rows ; symmetries ; smart stopping ; PRUNING.
+// PRUNING done. cycle detection IMPOSSIBLE now. drifting rows ALSO PROBABLY IMPOSSIBLE
 #include <bits/stdc++.h>
 #include "cadical/src/cadical.hpp"
 #include "cqueue/bcq.h"
+
 using namespace std;
 
 #define sz(x) ((int)(x.size()))
@@ -57,7 +59,7 @@ void trans(vector<int> vars, vector<int>& inst) {
   }
 }
 
-bool Compl3t34bl3(const vector<uint64_t>& state, int phase) {
+bool Compl3t34bl3(const vector<uint64_t>& state, int phase, uint64_t enforce) {
 auto idx = [&](int j) { return ((sym==1) ? min(j, width - j - 1) : j); };
   auto get = [&](int r, int j, int t) {
     if(t == p) t = 0, j = (sym == 2) ? width - j - 1 : j;
@@ -68,7 +70,7 @@ auto idx = [&](int j) { return ((sym==1) ? min(j, width - j - 1) : j); };
   };
   for(int row=state.size(); row<sz(state)+2*p; row++){
     int r=(row+phase)/p, t=(row+phase)%p;
-    for(int j=-1; j<=width; j++) {
+    for(int j=-1; j<=width; j++) if(enforce & (1ull<<(j+1))) {
       vector<int>ar = {get(r-2,j-1,t),get(r-2,j,t),get(r-2,j+1,t),
              get(r-1,j-1,t),get(r-1,j,t),get(r-1,j+1,t),
              get(r,j-1,t),get(r,j,t),get(r,j+1,t),get(r-1,j,t+1)};
@@ -138,8 +140,10 @@ void genNextRows(vector<uint64_t>& state, int phase, int ahead, uint64_t enforce
 }; using namespace _logic;
 
 namespace _searchtree {
-/* u - unqueued; q - queued; d - decomissioned */
-struct node { uint64_t row; int depth, shift, parent; char state; };
+/* u - unqueued; q - queued; d - decomissioned; c - valid completion for one side */
+constexpr int TAG_VALID_COMPLETION = 1;
+constexpr int TAG_RETURNING_NODE_TREE2 = (1<<30);
+struct node { uint64_t row; int depth, parent; char state; int tags; };
 struct searchTree {
   node* a;
   int depths[1000];
@@ -147,10 +151,28 @@ struct searchTree {
   int treeSize = 0, treeAlloc = 16777216;
   searchTree() { a = new node[treeAlloc]; }
   ~searchTree() { delete a; }
-  void dumpTree(string fn) { } // TODO
-  void loadTree(string fn) { }
+  void dumpTree(ostream f) {
+    f << "BEGINTREE\n";
+    f << treeSize << "\n";
+    for(int i=0; i<treeSize; i++)
+      f << a[i].row << ' ' << a[i].depth << ' ' << a[i].parent << ' ' << a[i].state << ' ' << a[i].tags;
+    f << "ENDTREE\n";
+  }
+  void loadTree(istream f) { 
+    for(int i=0; i<1000; i++) depthcnt[i] = depths[i] = 0;
+    string buf;
+    f >> buf; assert(buf == "BEGINTREE");
+    f >> treeSize;
+    for(int i=0; i<treeSize; i++)
+      f >> a[i].row >> a[i].depth >> a[i].parent >> a[i].state >> a[i].tags;
+    f >> buf; assert(buf == "ENDTREE");
+    // TODO: delete nodes whose parents are still queued & maintain depths, depthcnt
+    for(int i=0; i<treeSize; i++) {
+      depths[a[i].depth] += (a[i].state == 'q'), depthcnt[a[i].depth]++;
+    }
+  }
   void flushTree() { }
-  int newNode(node s = {0,0,0,0,' '}) {
+  int newNode(node s = {0,0,0,' ',0}) {
     a[treeSize] = s; depthcnt[s.depth]++;
     if(s.state == 'q') depths[s.depth]++;
     return treeSize++;
@@ -179,12 +201,12 @@ struct searchTree {
 }; using namespace _searchtree;
 
 int bdep = 0;
-void emit(vector<uint64_t> mat){
-  bool d = Compl3t34bl3(mat, 0);
-  if(!d) {
-    if(sz(mat) <= bdep) return;
-    bdep = mat.size();
-  }else
+void emit(vector<uint64_t> mat, bool compl3t3){
+  if(!compl3t3) {
+    if(mat.size() <= bdep) return;
+    bdep = max(bdep, (int)mat.size());
+  }
+  else
     cout<<"[[OSC1LL4TOR COMPL3T3!!!]]"<<endl;
   std::string rle;
   int cnt = 0, cur = 0;
@@ -206,12 +228,22 @@ struct horseQueue {
   set<pair<long long,pair<int,int>>> internal;
   vector<int> targ;
   mt19937 rng;
+  bool first = true;
   horseQueue() : rng(720) { }
   int size() { return internal.size(); }
-  pair<int, int> popTop() {
-    pair<int,int> val = internal.begin()->second;
-    internal.erase(internal.begin());
-    return val;
+  pair<int, int> popTop(int desired) {
+    if(desired == -1) {
+      pair<int,int> val = internal.begin()->second;
+      internal.erase(internal.begin());
+      return val;
+    } else {
+      auto it = internal.begin();
+      while(it != internal.end() && it->second.first != desired) it++;
+      if(it == internal.end()) return popTop(-1);
+      pair<int,int> val = it->second;
+      internal.erase(it);
+      return val;
+    }
   }
   void push(pair<int, int> nx) {
     auto& ref = nx.first?tree2:tree;
@@ -221,7 +253,8 @@ struct horseQueue {
       ((h[wt + 2 * p] >> __builtin_ctzll(overlap)) & 3) == targ[wt]; wt++);
     internal.insert({(-wt) * 65536 + rng() % 65536, nx});
   }
-  void retarg(vector<int> newtarg) {
+  void retarget(vector<int> newtarg) {
+    if(first) { first = false; return; }
     // TODO: rewrite this. this ineff af
     vector<pair<int, int>> nxs;
     for(auto [a, b] : internal)
@@ -232,16 +265,20 @@ struct horseQueue {
   }
 } PQ;
 
+#include "debug.h"
+
+bool ORIGINALLY_COMPLETE = 0;
+
 bool canMatch(int i, const vector<uint64_t>& pat, searchTree& ref, vector<int>& sol, vector<int>& lux) {
   if(ref.a[i].depth == pat.size()) {
     vector<uint64_t> marge = ref.getState(i, 1);
     for(int x=0; x<pat.size(); x++)
       marge[x] |= pat[x];
-    emit(marge);
+    emit(marge, (ref.a[i].tags & TAG_VALID_COMPLETION) && ORIGINALLY_COMPLETE);
     return 1;
   }
   if(ref.a[i].state != 'u') {
-    assert(ref.a[i].state != 'd');
+    assert(ref.a[i].state != 'd'); // TODO: *really*?
     return 1;
   }
   int f = sol[i], ok = 0;
@@ -253,74 +290,82 @@ bool canMatch(int i, const vector<uint64_t>& pat, searchTree& ref, vector<int>& 
   return ok;
 }
 
-void prune() {
-  auto t1 = chrono::high_resolution_clock::now();
-  // cout << "[1NFO] ";
-  // for(auto& [a,b]:idx1){
-  //   for(int i:a)cout<<i;
-  //   cout<<" - ";
-  //   cout<<b<<' ';
-  // }
-  // cout<<endl;
-  int p2 = 0, x2 =0;
-  {
-    vector<int> sol1(tree.treeSize, -1), lux1(tree.treeSize, -1);
-    for(int i=1; i<tree.treeSize; i++)
-      lux1[i] = sol1[tree.a[i].parent], sol1[tree.a[i].parent] = i;
-    for(int i=0; i < tree2.treeSize; i++) {
-      if(tree2.shouldSkip(i)) continue;
-      x2++;
-      // cout<<"M4TCH1NG"<<endl;
-      if(i>=2*p && !canMatch(0, tree2.getState(i, 1), tree, sol1, lux1)) tree2.a[i].state = 'd';
-      // cout<<"DON3 M4TCH1NG"<<endl;
-    }
-    for(int i=0; i < tree2.treeSize; i++)
-      if(!tree2.shouldSkip(i)) p2++;
+void preprune(int i, bool prune, int& p, vector<int>& sol, vector<int>& lux,
+              vector<int>& osol, vector<int>& olux, searchTree& tr, searchTree& otr) {
+  if(tr.a[i].state == 'd') return;
+  // TODO canMatch is O(n). dp this
+  ORIGINALLY_COMPLETE = tr.a[i].tags & TAG_VALID_COMPLETION;
+  if(prune && i >= 2*p && !canMatch(0, tr.getState(i, 1), otr, osol, olux)){
+    tr.a[i].state = 'd';
+    return;
   }
-  int p1 = 0, x1 =0;
-  {
-    vector<int> sol2(tree2.treeSize, -1), lux2(tree2.treeSize, -1);
-    for(int i=1; i<tree2.treeSize; i++)
-      lux2[i] = sol2[tree2.a[i].parent], sol2[tree2.a[i].parent] = i;
-    for(int i=0; i < tree.treeSize; i++) {
-      if(tree.shouldSkip(i)) continue;
-      x1++;
-      // cout<<"M4TCH1NG"<<endl;
-      if(i>=2*p && !canMatch(0, tree.getState(i, 1), tree2, sol2, lux2)) tree.a[i].state = 'd';
-      // cout<<"DON3 M4TCH1NG"<<endl;
-    }
-    for(int i=0; i < tree.treeSize; i++)
-      if(!tree.shouldSkip(i)) p1++;
+  p++;
+  int f = sol[i], ok = 0;
+  while(f != -1) {
+    preprune(f, prune, p, sol, lux, osol, olux, tr, otr);
+    f = lux[f];
   }
+}
 
-  // TODO: this ineff af asw.
-  map<vector<int>, int> a1, b1, a2, b2;
-  for(int i=2*p;i<tree.treeSize;i++)if(!tree.shouldSkip(i)) {
-    auto h = tree.getState(i, 1);
-    vector<int> s; for(int t=2*p; t<h.size(); t++) s.push_back((h[t]>>__builtin_ctzll(overlap))&3);
-    a1[s]++;
-    if(tree.a[i].state == 'q') b1[s]++;
-  }
-  a2 = a1; for(auto& [a, b]: a2) b= 0;
-  for(int i=2*p;i<tree2.treeSize;i++)if(!tree2.shouldSkip(i)) {
-    auto h = tree2.getState(i, 1);
-    vector<int> s; for(int t=2*p; t<h.size(); t++) s.push_back((h[t]>>__builtin_ctzll(overlap))&3);
-    a2[s]++;
-    if(tree2.a[i].state == 'q') b2[s]++;
-  }
+void retargetDfs(vector<int>& besttarg, vector<int>& curttarg, int& bw, vector<int> t1nodes, vector<int> t2nodes,
+                 vector<int>& sol1, vector<int>& lux1, vector<int>& sol2, vector<int>& lux2) {
+  if(t1nodes.empty() || t2nodes.empty()) return;
+  int a1=t1nodes.size(), b1=0, a2=t2nodes.size(), b2=0;
+  for(int i:t1nodes) b1 += (tree.a[i].state == 'q');
+  for(int i:t2nodes) b2 += (tree2.a[i].state == 'q');
   // weight: a1 * b2 + b1 * a2. i know this counts q-q twice!!!!!!!! >:]
-  vector<int> besttarg; int bw = 0, sw = 0;
-  for(auto [targ, v] : a2) {
-    if(((sw = a1[targ] * b2[targ] + b1[targ] * v) > bw && targ.size() >= besttarg.size()) || (sw && targ.size() > besttarg.size()))
-      bw = sw, besttarg = targ;
-    // if(sw){for(int i:targ)cout<<i;
-    // cout<<' '<<sw<<endl;
-    // }
+  int sw = a1 * b2 + b1 * a2;
+  if((sw > bw && curttarg.size() >= besttarg.size()) || (sw && curttarg.size() > besttarg.size())) {
+    besttarg = curttarg;
+    bw = sw;
+  }
+  vector<vector<int>> t1x(4), t2x(4);
+  for(int i:t1nodes) {
+    int f = sol1[i];
+    while(f != -1) {
+      if(tree.a[f].state != 'd') t1x[(tree.a[f].row >>__builtin_ctzll(overlap)) & 3].push_back(f);
+      f = lux1[f];
     }
-  PQ.retarg(besttarg);
-  auto t2 = chrono::high_resolution_clock::now();
-  cout<<"[1NFO] PRUN1NG: "<<x1<<" -> "<<p1<<"/"<<tree.treeSize<<", "<<x2<<" -> "<<p2<<"/"<<tree2.treeSize
-      <<" 1N "<<(t2-t1).count()/1000000.0<<"ms"<<endl;
+  }
+  for(int i:t2nodes) {
+    int f = sol2[i];
+    while(f != -1) {
+      if(tree2.a[f].state != 'd') t2x[(tree2.a[f].row >>__builtin_ctzll(overlap)) & 3].push_back(f);
+      f = lux2[f];
+    }
+  }
+  for(int nx = 0; nx < 4; nx++) {
+    curttarg.push_back(nx);
+    retargetDfs(besttarg, curttarg, bw, t1x[nx], t2x[nx], sol1, lux1, sol2, lux2);
+    curttarg.pop_back();
+  }
+}
+
+void prune() {
+  BENCHMARK(pruning)
+  int p2 = 0, x2 =0, p1 = 0, x1 = 0;
+  vector<int> sol1(tree.treeSize, -1), lux1(tree.treeSize, -1);
+  for(int i=1; i<tree.treeSize; i++)
+    lux1[i] = sol1[tree.a[i].parent], sol1[tree.a[i].parent] = i;
+  vector<int> sol2(tree2.treeSize, -1), lux2(tree2.treeSize, -1);
+  for(int i=1; i<tree2.treeSize; i++)
+    lux2[i] = sol2[tree2.a[i].parent], sol2[tree2.a[i].parent] = i;
+  preprune(0, 0, x2, sol2, lux2, sol1, lux1, tree2, tree);
+  preprune(0, 1, p2, sol2, lux2, sol1, lux1, tree2, tree);
+  preprune(0, 0, x1, sol1, lux1, sol2, lux2, tree, tree2);
+  preprune(0, 1, p1, sol1, lux1, sol2, lux2, tree, tree2);
+  BENCHMARKEND(pruning)
+  BENCHMARK(targfinding)
+  // TODO: this ineff af asw.
+  vector<int> besttarg, curttarg{(int)((tree2.a[0].row >>__builtin_ctzll(overlap)) & 3)}; int bw = 0;
+  retargetDfs(besttarg, curttarg, bw, {0}, {0}, sol1, lux1, sol2, lux2);
+  besttarg.erase(besttarg.begin(), besttarg.begin() + 2 * p);
+  BENCHMARKEND(targfinding)
+  BENCHMARK(retargeting)
+  PQ.retarget(besttarg);
+  BENCHMARKEND(retargeting)
+
+  cout<<"[1NFO] PRUN1NG: "<<x1<<" -> "<<p1<<"/"<<tree.treeSize<<", "<<x2<<" -> "<<p2<<"/"<<tree2.treeSize<<endl;
   cout << "[1NFO] N3W T4RG3T: ";
   for(int i:besttarg)cout<<i;
   cout<<endl;
@@ -340,12 +385,14 @@ void betaUniverse() {
         nx.first ? enforce2 : enforce,
         nx.first ? remember2 : remember, 
         [&](uint64_t x){ 
-          B2A.enqueue({x, dep+1, nx.first, nx.second, '0'});
+          B2A.enqueue({x, dep+1, nx.second, ' ', 0 | (nx.first ? TAG_RETURNING_NODE_TREE2 : 0)});
       });
     }
-    B2A.enqueue({0, dep, nx.first, -nx.second, '0'});
+    B2A.enqueue({0, dep, -nx.second, ' ', 0 | (nx.first ? TAG_RETURNING_NODE_TREE2 : 0)});
   }
 }
+
+vector<uint64_t> filters;
 
 void search(int th, int nodelim, int qSize) {
   int solved = 0, onx;
@@ -367,26 +414,33 @@ void search(int th, int nodelim, int qSize) {
         else cout<<'/'<<tree.depthcnt[i]<<'+'<<tree2.depthcnt[i];
       }
       cout<<endl;
-      // cout<<"ST4RT1NG PRUN1NG"<<endl;
       prune();
-      // cout<<"3ND3D PRUN1NG"<<endl;
     }
     reportidx++;
   };
   while(B2A.wait_dequeue(x), 1) {
-    auto& ref = x.shift ? tree2 : tree;
+    auto& ref = (x.tags & TAG_RETURNING_NODE_TREE2) ? tree2 : tree;
     if(x.parent < 0) {
       ref.depths[x.depth]--, solved++, --qSize;
       if(ref.a[-x.parent].state == 'q')
         ref.a[-x.parent].state = 'u';
       if(solved % 16 == 0) report();
     } else {
-      x.state = 'q', onx = ref.newNode(x);
-      PQ.push({x.shift, onx});
-      sdep = max(sdep, x.depth);
+      if((x.depth-1) / p < filters.size() && ((x.row & filters[(x.depth-1)/p]) != x.row)) {
+        // cout << "[1NFO] NOD3 1GNOR3D" << endl;
+      } else {
+        x.state = 'q', onx = ref.newNode(x);
+        const vector<uint64_t> st = ref.getState(onx);
+        if(Compl3t34bl3(st, ref.a[onx].depth % p, (x.tags & TAG_RETURNING_NODE_TREE2) ? enforce2 : enforce)) {
+          cout << "[1NFO] TR33 " << !!(x.tags & TAG_RETURNING_NODE_TREE2) << " NOD3 " << onx << " 1S 4 V4L1D COMPL3T1ON" << endl;
+          ref.a[onx].tags |= TAG_VALID_COMPLETION;
+        }
+        PQ.push({!!(x.tags & TAG_RETURNING_NODE_TREE2), onx});
+        sdep = max(sdep, x.depth);
+      }
     }
     while(PQ.size() && qSize <= 2*th && nodelim) {
-      pair<int,int> best = PQ.popTop();
+      pair<int,int> best = PQ.popTop((solved % 3) - 1);
       A2B.enqueue(best), qSize++, nodelim--;
     }
     if(x.parent < 0 && !qSize) break;
@@ -403,7 +457,7 @@ int main(int argc, char* argv[]) {
     cout<<"THR34DS, NOD3 L1M1T, LOOK4H34D: "<<endl; cin>>th>>nodelim>>l4h;
     cout<<"P3R1OD, W1DTH, SYMM3TRY, ST4TOR W1DTH: "<<endl; cin>>p>>width>>sym>>stator;
     if(sym != 0 && sym != 1)
-      cout << "OTH3R SYMM3TR1S T3MPOR4R1LY NOT T3ST3D >:[" << endl;
+      cout << "OTH3R SYMM3TR13S T3MPOR4R1LY NOT T3ST3D >:[" << endl;
     int bthh = (sym ? width/4 : width/2);
     cout<<"B1S3CT1ON THR3SHOLD: [SUGG3ST3D " << bthh << "] "<<endl; cin >> bthh;
     // cout<<"NUMB3R OF ROWS 4DV4NC3 FOR 1NN3R TR33: [0 1S OK4Y] "<<endl; cin >> rows_priority;
@@ -414,16 +468,7 @@ int main(int argc, char* argv[]) {
       if(s < bthh) enforce2 |= (1ull << (j+1));
       else enforce |= (1ull << (j+1));
     }
-    // cout<<enforce<<' '<<enforce2<<' '<<remember<<' '<<remember2<<endl;
     cout<<"F1RST "<<2*p<<" ROWS:"<<endl;
-
-    // enforce =   0b0'000000'111111'111111'000000'0;
-    // remember =    0b000001'111111'111111'100000;
-    // enforce2=   0b1'111111'000000'000000'111111'1;
-    // remember2=    0b111111'100000'000001'111111;
-    // cout<<enforce<<' '<<enforce2<<' '<<remember<<' '<<remember2<<endl;
-    // return 0;
-
     overlap = remember & remember2;
 
     int nx = -1, onx = -1;
@@ -431,8 +476,8 @@ int main(int argc, char* argv[]) {
       uint64_t x=0;
       string s; cin>>s;
       for(int j=0;j<width;j++)if(s[j]=='o')x|=(1ull<<j);
-      nx = tree.newNode({x, i+1, 0, onx, 'u'});
-      nx = tree2.newNode({x, i+1, 0, onx, 'u'});
+      nx = tree.newNode({x, i+1, onx, 'u', 0});
+      nx = tree2.newNode({x, i+1, onx, 'u', 0});
       onx = nx;
     }
     tree.a[onx].state = 'q';
@@ -446,6 +491,14 @@ int main(int argc, char* argv[]) {
       bdep = max(bdep, tree2.a[i].depth);
       if(tree2.a[i].state == 'q')
         A2B.enqueue({1, i}), tree2.depths[tree2.a[i].depth]++, qSize++;
+    }
+    cout << "F1LT3R ROWS: [1F YOU DON'T KNOW WH4T TH1S 1S, 3NT3R 0!] " << endl;
+    int filterrows; cin>>filterrows;
+    for(int i=0;i<filterrows;i++){
+      uint64_t x=0;
+      string s; cin>>s;
+      for(int j=0;j<width;j++)if(s[j]=='o')x|=(1ull<<j);
+      filters.push_back(x);
     }
     search(th, nodelim, qSize);
   } else if(argc > 1 && string(argv[1]) == "distrib") {
