@@ -110,11 +110,60 @@ void genNextRows(vector<uint64_t>& state, int phase, int ahead, auto fn) {
         eqify(get(r, j, t), get(r, j, t+1));
   }
   vector<int> crit(max(idx(width/2),idx(width-1))+1); iota(crit.begin(), crit.end(), 3);
-  vector<uint64_t> bb(state.begin()+1, state.end());
   solve(inst, crit, [&](vector<int> sol){
     uint64_t x = 0;
     for(int j=0; j<width; j++) if(sol[idx(j)]>0) x|=(1ull<<j);
     fn(x);
+  });
+}
+
+void genNextRows_dualEncode(vector<vector<uint64_t>>& state, int phase, int ahead, auto fn) {
+  assert(p*2 == sz(state[0]));
+  int cntx = state.size();
+  vector<int> inst = {1, 0, -2, 0};
+  auto idx = [&](int j) { return ((sym==1) ? min(j, width - j - 1) : j); };
+  auto get = [&](int r, int j, int t) {
+    if(t == p) t = 0, j = (sym == 2) ? width - j - 1 : j;
+    r = r*p+t-phase;
+    if(j <= -1 || j >= width) return (2-0);
+    // if(r < sz(state)) return (2-!!(state[r]&(1ull<<j)));
+    // return 3 + idx(j) + (int)(r-state.size())*width;
+    return 3 + idx(j) + (int)(r)*width;
+  };
+  auto imply = [&](int i, int j) { for(int x:vector<int>{-i,j,0}) inst.push_back(x); };
+  auto eqify = [&](int i, int j) { imply(i, j), imply(-i, -j); };
+  for(int row=state[0].size(); row<sz(state[0])+ahead; row++){
+    int r=(row+phase)/p, t=(row+phase)%p;
+    for(int j=-1; j<=width; j++)
+      trans({get(r-2,j-1,t),get(r-2,j,t),get(r-2,j+1,t),
+             get(r-1,j-1,t),get(r-1,j,t),get(r-1,j+1,t),
+             get(r,j-1,t),get(r,j,t),get(r,j+1,t),get(r-1,j,t+1)}, inst);
+    if(t != p-1) for(int j=0; j<width; j++)
+      if(j < stator || width - j <= stator)
+        eqify(get(r, j, t), get(r, j, t+1));
+  }
+  vector<int> altvars(cntx); iota(altvars.begin(), altvars.end(), 3 + (sz(state[0])+ahead)*width);
+  for(int i=0; i<cntx;i++)
+    for(int row=0; row<sz(state[0]); row++){
+      int r=(row+phase)/p, t=(row+phase)%p;
+      for(int j=0; j<width; j++)
+        imply(altvars[i], (state[i][row]&(1ull<<j)) ? get(r,j,t) : -get(r,j,t));
+    }
+  for(int i:altvars) inst.push_back(i); 
+  inst.push_back(0);
+  for(int i:altvars) for(int j: altvars) if(i != j) imply(i, -j);
+  vector<int> crit(max(idx(width/2),idx(width-1))+1); iota(crit.begin(), crit.end(), 3+2*p*width);
+  crit.insert(crit.end(), altvars.begin(), altvars.end());
+  solve(inst, crit, [&](vector<int> sol){
+    uint64_t x = 0;
+    for(int j=0; j<width; j++) if(sol[idx(j)]>0) x|=(1ull<<j);
+    int idx = -1;
+    for(int i=0; i<cntx; i++) if(sol[sol.size()-cntx+i]>0) {
+      assert(idx == -1);
+      idx = i;
+    }
+    assert(idx != -1);
+    fn(idx, x);
   });
 }
 
@@ -204,20 +253,25 @@ void emit(int state, bool d = true){
   }
   f('!'); 
   cout << "x = 0, y = 0, rule = B3/S23\n" + rle + '!' << endl;
+  if(d) exit(0);
 }
 
-moodycamel::BlockingConcurrentQueue<int> A2B;
+moodycamel::BlockingConcurrentQueue<vector<int>> A2B;
 moodycamel::BlockingConcurrentQueue<node> B2A;
 
 void betaUniverse() {
-  int nx, onx;
-  while(A2B.wait_dequeue(nx), nx != -1) {
-    vector<uint64_t> h = getState(nx);
-    int dep = tree[nx].depth;
-    genNextRows(h, dep%p, l4h, [&](uint64_t x){ 
-      B2A.enqueue({x, dep+1, 0, nx, '0'});
+  vector<int> nxs;
+  // todo: this can't terminate then, might deadlock
+  while(A2B.wait_dequeue(nxs), nxs[0] != -1){
+    vector<vector<uint64_t>> h;
+    for(int i:nxs) h.push_back(getState(i));
+    int dep = tree[nxs[0]].depth;
+    genNextRows_dualEncode(h, dep%p, l4h, [&](int idx, uint64_t x){ 
+      B2A.enqueue({x, dep+1, 0, nxs[idx], '0'});
     });
-    B2A.enqueue({0, dep, 0, -nx, '0'});
+    for(int nx:nxs)
+      B2A.enqueue({0, dep, 0, -nx, '0'});
+    nxs.clear();
   }
 }
 
@@ -226,13 +280,14 @@ void search(int th, int nodelim, int qSize) {
   vector<thread> universes;
   for(int i=0;i<th;i++) universes.emplace_back(betaUniverse);
   node x;
-  int reportidx = 0;
+  int reportidx = 0, nsolved = 0;
   priority_queue<pair<int,int>> PQ;
   auto report = [&] {
     cout << "[1NFO] SOLV3D ";
-    cout << solved << "; QU3U3D " << qSize + PQ.size() << "; TOT4L " << treeSize << " NOD3S";
+    cout << solved << " (" << solved-nsolved << "); QU3U3D " << qSize + PQ.size() << "; TOT4L " << treeSize << " NOD3S";
     cout << endl;
-    if(reportidx % 16 == 0){
+    nsolved=solved;
+    if(reportidx % 8 == 0){
       cout << "[1NFO] D3PTH R34CH3D "<< bdep<<" ; TR33 PROF1L3 ";
       for(int i=2*p;i<=bdep;i++){
         cout<<' '<<depths[i];
@@ -242,32 +297,36 @@ void search(int th, int nodelim, int qSize) {
     }
     reportidx++;
   };
+  auto t1 = chrono::high_resolution_clock::now();
   while(B2A.wait_dequeue(x), 1) {
     if(x.parent < 0) {
       depths[x.depth]--, solved++, tree[-x.parent].state = 'u';
-      while(PQ.size() && qSize <= 2*th && nodelim) {
-        int best = PQ.top().second; PQ.pop();
-        A2B.enqueue(best), qSize++, nodelim--;
-      }
-      if(solved % 16 == 0) report();
-      if(!--qSize) break;
+      --qSize;
     } else {
       // if(x.row == tree[x.parent].row && x.depth == 6) continue;
       x.state = 'q', tree[onx = newNode()] = x;
       depths[x.depth]++, total[x.depth]++;;
-      if(nodelim != 0) {
-        PQ.push({x.depth, onx});
-        while(PQ.size() && qSize <= 2*th && nodelim) {
-          int best = PQ.top().second; PQ.pop();
-          A2B.enqueue(best), qSize++, nodelim--;
-        }
-      }
-      if(treeSize%256==0) report();
+      PQ.push({-x.depth, onx});
       emit(onx, Compl3t34bl3(getState(onx), x.depth%p));
     }
+    vector<int> blk; int tdep = -1;
+    if(qSize <= 6*th) while(PQ.size() && qSize <= 6*th+10 && nodelim) {
+      int best = PQ.top().second, dep = PQ.top().first; PQ.pop();
+      if(blk.size() && ((blk.size() == 5) || (tdep != dep))) A2B.enqueue(blk), blk.clear();
+      blk.push_back(best), tdep = dep, qSize++, nodelim--;
+    }
+    if(blk.size()) A2B.enqueue(blk);
+    if(!qSize) break;
+    auto t2 = chrono::high_resolution_clock::now();
+    auto d = t2 - t1;
+    if((t2-t1) > 10s) {
+      t1 = t2;
+      report();
+    }
   }
-  for(int i=0;i<th;i++) A2B.enqueue(-1);
+  for(int i=0;i<th;i++) A2B.enqueue({-1});
   for(thread& x:universes) x.join();
+  reportidx = 0;
   report();
 }
 
@@ -294,7 +353,7 @@ int main(int argc, char* argv[]) {
       total[tree[i].depth]++, bdep = max(bdep, tree[i].depth);
       // if(tree[i].state == 'q' && tree[i].depth <= deplim){
       if(tree[i].state == 'q'){
-        A2B.enqueue(i), depths[tree[i].depth]++, qSize++;
+        A2B.enqueue({i}), depths[tree[i].depth]++, qSize++;
       }
     }
     search(th, nodelim, qSize);
