@@ -3,8 +3,8 @@
 
 #define BENCHMARKEND(label)                                                    \
   auto label##_end = std::chrono::high_resolution_clock::now();                \
-  cout << #label << " elapsed: "                                               \
-       << std::chrono::duration_cast<std::chrono::milliseconds>(label##_end -  \
-                                                                label##_start) \
-              .count()                                                         \
-       << " ms\n";
+  DEBUG << #label << " elapsed: "                                             \
+        << std::chrono::duration_cast<std::chrono::milliseconds>(label##_end -  \
+                                                                 label##_start) \
+               .count()                                                         \
+        << " ms\n";

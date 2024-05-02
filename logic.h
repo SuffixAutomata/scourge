@@ -82,9 +82,9 @@ bool Compl3t34bl3(const std::vector<uint64_t> &state, int phase,
   return 1;
 }
 
-void solve(std::vector<int> &inst, std::vector<int> crit, auto fn) {
+void solve(std::vector<int> &inst, std::vector<int> crit, auto fn, bool term1=false) {
   CaDiCaL::Solver *solver = new CaDiCaL::Solver;
-  solver->std::set("quiet", 1);
+  solver->set("quiet", 1);
   for (int i : inst)
     solver->add(i);
   int res;
@@ -96,6 +96,7 @@ void solve(std::vector<int> &inst, std::vector<int> crit, auto fn) {
     for (int i = 0; i < sz(crit); i++)
       solver->add(-resp[i]);
     fn(resp), solver->add(0);
+    if(term1) break;
   }
   delete solver;
 }
@@ -166,6 +167,66 @@ void genNextRows(std::vector<uint64_t> &state, int depth, int ahead,
   });
 }
 
+bool existsNextRows(std::vector<uint64_t> &state, int depth, int ahead,
+                    uint64_t enforce, uint64_t remember) {
+  assert(p * 2 == sz(state));
+  int phase = depth % p;
+  std::vector<int> inst = {1, 0, -2, 0};
+  auto idx = [&](int j) { return ((sym == 1) ? min(j, width - j - 1) : j); };
+  auto get = [&](int r, int j, int t) {
+    if (t == p)
+      t = 0, j = (sym == 2) ? width - j - 1 : j;
+    r = r * p + t - phase;
+    if (t == -1)
+      r = sz(state);
+    if (j <= -1 || j >= width)
+      return (2 - 0);
+    if (r < sz(state))
+      return (2 - !!(state[r] & (1ull << j)));
+    return 3 + idx(j) + (r - sz(state)) * width;
+  };
+  auto eqify = [&](int i, int j) {
+    for (int x : std::vector<int>{i, -j, 0, -i, j, 0})
+      inst.push_back(x);
+  };
+  for (int row = sz(state); row < sz(state) + ahead; row++) {
+    int r = (row + phase) / p, t = (row + phase) % p;
+    for (int j = -1; j <= width; j++)
+      if (enforce & (1ull << (j + 1)))
+        trans({get(r - 2, j - 1, t), get(r - 2, j, t), get(r - 2, j + 1, t),
+               get(r - 1, j - 1, t), get(r - 1, j, t), get(r - 1, j + 1, t),
+               get(r, j - 1, t), get(r, j, t), get(r, j + 1, t),
+               get(r - 1, j, t + 1)},
+              inst);
+    if (t != p - 1)
+      for (int j = 0; j < width; j++)
+        if (enforce & (1ull << (j + 1)))
+          if (j < stator || width - j <= stator)
+            eqify(get(r, j, t), get(r, j, t + 1));
+  }
+  for (int row = 0; row < sz(state) + ahead; row++) {
+    int r = (row + phase) / p, t = (row + phase) % p;
+    if (((row + depth - 2 * p) / p) < sz(filters))
+      for (int j = 0; j < width; j++)
+        if (!(filters[(row + depth - 2 * p) / p] & (1ull << j)))
+          eqify(get(r, j, t), 2 - 0);
+  }
+  std::vector<int> crit;
+  {
+    std::set<int> _crit;
+    for (int j = 0; j < width; j++)
+      if (remember & (1 << j))
+        _crit.insert(get(0, j, -1));
+    crit = std::vector<int>(_crit.begin(), _crit.end());
+  }
+  std::vector<uint64_t> bb(state.begin() + 1, state.end());
+  bool hasSol = 0;
+  solve(inst, crit, [&](std::vector<int> sol) {
+    hasSol = 1;
+  }, true);
+  return hasSol;
+}
+
 }; // namespace _logic
 using namespace _logic;
 
@@ -183,4 +244,5 @@ void calculateMasks(int bthh) {
       enforce |= (1ull << (j + 1));
   }
   overlap = remember & remember2;
+  overlap_ctz = __builtin_ctzll(overlap);
 }
