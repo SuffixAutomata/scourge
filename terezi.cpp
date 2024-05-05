@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
-#include <format>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -119,19 +118,18 @@ void search(int th) {
       toEnq.push(weigh(i));
   }
   maintainQueue();
-  STATUS << std::format("{} nodes queued ({} halfrows)\n", vqcnt, qSize);
+  STATUS << vqcnt << " nodes queued (" << qSize << " halfrows)\n";
   std::vector<std::thread> universes;
   for (int i = 0; i < th; i++)
     universes.emplace_back(betaUniverse);
   B2AUnit x;
   auto report = [&] {
-    STATUS << std::format("solved {} N ({} ½rs); queued {} N ({} ½rs); total {} nodes\n",
-                          solvedNodes, solved, vqcnt, qSize, tree.treeSize);
+    STATUS << "solved " << solvedNodes << " N (" << solved << " ½rs); queued " << vqcnt << " N (" << qSize << " ½rs); total " << tree.treeSize << " nodes\n";
     if (reportidx % 8 == 0) {
       long long cnt = 0, cnt2 = 0;
       for(int i=0; i<tree.treeSize; i++)
         cnt += tree.a[i].n[0] * tree.a[i].n[1], cnt2 += (tree.a[i].tags & TAG_QUEUED) ? tree.a[i].n[0] * tree.a[i].n[1] : 0;
-      STATUS << std::format("depth reached {}; {} ({} queued) implied nodes; tree profile", sdep, cnt, cnt2);
+      STATUS << "depth reached " << sdep << "; " << cnt << " (" << cnt2 << " queued) implied nodes; tree profile";
       for (int i = 2 * p; i <= sdep; i++) {
         STATUS << ' ' << tree.depths[i] << '/' << tree.depthcnt[i];
         // TODO: better status output here
@@ -151,9 +149,9 @@ void search(int th) {
       if(!--remaining[id]) {
         {
           auto& w = staging[id];
-          DEBUG << std::format("node {} (seq='{}') done, producing children: {}-{} {}-{} {}-{} {}-{}\n",
-                                id, tree.brief(id), sz(w[0][0]), sz(w[0][1]), sz(w[1][0]), sz(w[1][1]), 
-                                sz(w[2][0]), sz(w[2][1]), sz(w[3][0]), sz(w[3][1]));
+          DEBUG << "node " << id << " (seq='" << tree.brief(id) << "') done, producing children: " 
+                << sz(w[0][0]) << "-" << sz(w[0][1]) << " " << sz(w[1][0]) << "-" << sz(w[1][1]) << " "
+                << sz(w[2][0]) << "-" << sz(w[2][1]) << " " << sz(w[3][0]) << "-" << sz(w[3][1]) << "\n";
           for(int v=0; v<4; v++)
             if(sz(w[v][0]) && sz(w[v][1])) // <- Pruning is reduced to one literal line
               toEnq.push(weigh(emitPartials(tree.newNode({v, depth, TAG_QUEUED, id}, w[v]))));
@@ -202,6 +200,7 @@ int main(int argc, char *argv[]) {
     if (x[0] == 'y' || x[0] == 'Y') {
       std::ifstream f("dump.txt");
       loadf(f);
+      f.close();
       INFO << "THR34DS, LOOK4H34D: [" << th << ' ' << l4h << "] \n";
       std::cin >> th >> l4h;
     } else {
