@@ -41,6 +41,8 @@ int overlap_ctz;
 #define SIDE0_ID(row) ((row) & remember)
 #define SIDE1_ID(row) ((row) & remember2)
 
+std::map<int, int> partialLoadOriginalNodeid;
+
 std::vector<uint64_t> filters;
 
 std::vector<uint64_t> arithmeticDecode(const std::vector<uint64_t>& dwords, const std::vector<uint64_t>& maxvals) {

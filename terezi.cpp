@@ -123,6 +123,8 @@ void search(int th) {
   for (int i = 0; i < th; i++)
     universes.emplace_back(betaUniverse);
   B2AUnit x;
+  auto t1 = std::chrono::high_resolution_clock::now();
+  std::string dump1 = "dump-odd.txt", dump2 = "dump-even.txt";
   auto report = [&] {
     STATUS << "solved " << solvedNodes << " N (" << solved << " ½rs); queued " << vqcnt << " N (" << qSize << " ½rs); total " << tree.treeSize << " nodes\n";
     if (reportidx % 8 == 0) {
@@ -135,10 +137,13 @@ void search(int th) {
         // TODO: better status output here
       }
       STATUS << '\n';
-      if (reportidx % 32 == 0) {
-        std::ofstream dump("dump.txt");
+      auto t2 = std::chrono::high_resolution_clock::now();
+      std::chrono::nanoseconds diff = t2 - t1;
+      if (diff.count() > 600 * 1e9) {
+        std::ofstream dump(dump1);
         dumpf(dump);
         dump.close();
+        swap(dump1, dump2);
       }
     }
     reportidx++;

@@ -116,7 +116,7 @@ struct searchTree {
     f.write("pyrope", 6);
     return cksum;
   }
-  uint64_t loadTree(std::ifstream &f) {
+  uint64_t loadTree(std::ifstream &f, bool partialLoad) {
     for (int i = 0; i < 1000; i++)
       depthcnt[i] = depths[i] = 0;
     std::string buf(6, 0);
@@ -124,6 +124,8 @@ struct searchTree {
     assert(buf == "terezi");
     int cnt[2]; cnt[0] = cnt[1] = 0;
     readInt(treeSize, f);
+    if(partialLoad)
+      assert(treeSize == 2 * p);
     uint64_t cksum = 0;
     for (int i = 0; i < treeSize; i++) {
       int ii;
@@ -210,7 +212,7 @@ struct searchTree {
 }; // namespace _searchtree
 using namespace _searchtree;
 
-void loadf(std::ifstream &f) {
+void loadf(std::ifstream &f, bool partialLoad = false) {
   BENCHMARK(load)
   readInt(th, f), readInt(l4h, f);
   readInt(p, f), readInt(width, f), readInt(sym, f), readInt(stator, f);
@@ -221,7 +223,7 @@ void loadf(std::ifstream &f) {
   filters = std::vector<uint64_t>(filterrows);
   for (int i = 0; i < filterrows; i++)
     readInt(filters[i], f);
-  uint64_t cksum = tree.loadTree(f);
+  uint64_t cksum = tree.loadTree(f, partialLoad);
   uint64_t expected_cksum; readInt(expected_cksum, f);
   INFO << "Loaded search tree; checksum " << std::hex << cksum << std::dec << "\n";
   if (cksum != expected_cksum)

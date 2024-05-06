@@ -1,3 +1,16 @@
+TODO 
+
+ - [x] Only dump every 10 minutes
+   - [ ] Later: Split dump into folder (maybe one file for several nodes, or one new file per dump)
+     - [ ] EVEN LATER: Option to merge a folder
+ - [ ] Delete useless nodes of search tree
+ - [ ] Distributify
+   - [ ] One node per workunit dumps, tag with `TAG_REMOTE_QUEUED`
+   - [ ] Merging saves with `TAG_INDETERMINATE_NODEID` into `TAG_REMOTE_QUEUED` nodes
+   - [ ] Explore multiple nodes deep into a subtree; use `TAG_INDETERMINATE_NODEID` on returned nodes
+   - [ ] Contributor label for each big tree node
+ - [ ] (Far future) Node-wise bisection index adjustment/floating
+ 
 # scourge
 
 ![](scripts/test.gif)
