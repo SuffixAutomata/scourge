@@ -76,49 +76,63 @@ void betaUniverse() {
 }
 
 int searchMode; // 0: BFS; 1: parallel DFS
-std::pair<int,int> weigh(int onx) { return {(searchMode?1:-1)*tree.a[onx].depth, onx}; }
 
 void search(int th) {
   int vqcnt = 0, solvedNodes = 0, solved = 0, onx, reportidx = 0, its = 0, sdep = bdep;
   std::map<int, std::vector<std::vector<std::vector<halfrow>>>> staging;
   std::map<int, int> remaining;
   std::priority_queue<std::pair<int, int>> toEnq;
+  int altQ[2] = {0, 0};
   auto enqTreeNode = [&] (int onx) {
+    if(searchMode == 2 && tree.a[onx].n[0] + tree.a[onx].n[1] >= 41) {
+      WARN << "Skipping node " << onx << "( seq='" << tree.brief(onx) << "') due to smallOnly: " << tree.a[onx].n[0] << "+" << tree.a[onx].n[1] << '\n';
+      return;
+    }
     // DEBUG << std::format("queueing node {} (seq='{}')\n", onx, tree.brief(onx));
     vqcnt++;
-    for(int x=0; x<2; x++)
+    for(int x=0; x<2; x++) {
+      altQ[x] -= tree.a[onx].n[x];
+      qSize += tree.a[onx].n[x];
       for(int j=0; j<tree.a[onx].n[x]; j++)
-        A2B.enqueue({onx, x, j}), qSize++, remaining[onx]++;
+        A2B.enqueue({onx, x, j}), remaining[onx]++;
+    }
     staging[onx] = std::vector<std::vector<std::vector<halfrow>>>(4, std::vector<std::vector<halfrow>>(2));
   };
   auto maintainQueue = [&] {
     while (toEnq.size() && qSize < 8 * th)
       enqTreeNode(toEnq.top().second), toEnq.pop();
   };
-  auto emitPartials = [&] (int onx) {
+  auto pushToHeap = [&] (int onx) {
     sdep = max(sdep, (int)tree.a[onx].depth);
     int ixs[2], isComplete[2]; ixs[0] = ixs[1] = isComplete[0] = isComplete[1] = 0;
     for(int x=0; x<2; x++)
       for (int i = 0; i < tree.a[onx].n[x]; i++) {
         const std::vector<uint64_t> st = tree.getState(onx, x, i);
-        if (Compl3t34bl3(st, tree.a[onx].depth % p, x ? enforce2 : enforce))
+        if (Compl3t34bl3(st, tree.a[onx].depth, tree.a[onx].depth % p, x ? enforce2 : enforce)) {
+          // WARN << onx << ' ' << x << ' ' << i << '\n';
+          // emit(tree.getState(onx, x, i, true), 0); bdep = 0;
           ixs[x] = i, isComplete[x] = 1;
+          break;
+        }
       }
+    // WARN << onx << '\n';
     std::vector<uint64_t> marge = tree.getState(onx, 0, ixs[0], true);
     std::vector<uint64_t> marge2 = tree.getState(onx, 1, ixs[1], true);
+    // WARN << sz(marge) << ' ' << sz(marge2) << ' ' << tree.a[onx].depth << '\n';
     for (int x = 0; x < sz(marge); x++)
       marge[x] |= marge2[x];
+    
     emit(marge, isComplete[0] && isComplete[1]);
-    return onx;
+    altQ[0] += tree.a[onx].n[0], altQ[1] += tree.a[onx].n[1];
+    toEnq.push({(searchMode?1:-1)*tree.a[onx].depth, onx});
   };
   for (int i = 0; i < tree.treeSize; i++) {
     if (tree.a[i].n[0] == 0 || tree.a[i].n[1] == 0)
       tree.a[i].tags &= ~TAG_QUEUED; // assholes, might as well skip them
-    if (tree.a[i].tags & TAG_QUEUED)
-      toEnq.push(weigh(i));
+    if ((tree.a[i].tags & TAG_QUEUED) && !(tree.a[i].tags & TAG_REMOTE_QUEUED))
+      pushToHeap(i);
   }
   maintainQueue();
-  STATUS << vqcnt << " nodes queued (" << qSize << " halfrows)\n";
   std::vector<std::thread> universes;
   for (int i = 0; i < th; i++)
     universes.emplace_back(betaUniverse);
@@ -126,7 +140,8 @@ void search(int th) {
   auto t1 = std::chrono::high_resolution_clock::now();
   std::string dump1 = "dump-odd.txt", dump2 = "dump-even.txt";
   auto report = [&] {
-    STATUS << "solved " << solvedNodes << " N (" << solved << " ½rs); queued " << vqcnt << " N (" << qSize << " ½rs); total " << tree.treeSize << " nodes\n";
+    STATUS << "solved " << solvedNodes << " N (" << solved << " ½rs); ";
+    STATUS << "queued " << vqcnt << "+" << toEnq.size() << " N (" << qSize << "+(" << altQ[0] << "+" << altQ[1] << ") ½rs); total " << tree.treeSize << " nodes\n";
     if (reportidx % 8 == 0) {
       long long cnt = 0, cnt2 = 0;
       for(int i=0; i<tree.treeSize; i++)
@@ -141,25 +156,27 @@ void search(int th) {
       std::chrono::nanoseconds diff = t2 - t1;
       if (diff.count() > 600 * 1e9) {
         std::ofstream dump(dump1);
-        dumpf(dump);
+        dumpf(dump, "dumpTree");
         dump.close();
         swap(dump1, dump2);
+        t1 = t2;
       }
     }
     reportidx++;
   };
+  report();
   while (B2A.wait_dequeue(x), 1) {
     int id = x.fa.onx, depth = tree.a[x.fa.onx].depth + 1;
     if (x.response == -1) {
       if(!--remaining[id]) {
         {
           auto& w = staging[id];
-          DEBUG << "node " << id << " (seq='" << tree.brief(id) << "') done, producing children: " 
-                << sz(w[0][0]) << "-" << sz(w[0][1]) << " " << sz(w[1][0]) << "-" << sz(w[1][1]) << " "
-                << sz(w[2][0]) << "-" << sz(w[2][1]) << " " << sz(w[3][0]) << "-" << sz(w[3][1]) << "\n";
+          // DEBUG << "node " << id << " (seq='" << tree.brief(id) << "') done, producing children: " 
+          //       << sz(w[0][0]) << "-" << sz(w[0][1]) << " " << sz(w[1][0]) << "-" << sz(w[1][1]) << " "
+          //       << sz(w[2][0]) << "-" << sz(w[2][1]) << " " << sz(w[3][0]) << "-" << sz(w[3][1]) << "\n";
           for(int v=0; v<4; v++)
             if(sz(w[v][0]) && sz(w[v][1])) // <- Pruning is reduced to one literal line
-              toEnq.push(weigh(emitPartials(tree.newNode({v, depth, TAG_QUEUED, id}, w[v]))));
+              pushToHeap(tree.newNode({v, depth, TAG_QUEUED, id}, w[v]));
         }
         vqcnt--, tree.depths[depth-1]--, solvedNodes++;
         tree.a[x.fa.onx].tags &= ~TAG_QUEUED;
@@ -195,7 +212,7 @@ int main(int argc, char *argv[]) {
     args.insert(argv[i]);
   if (std::filesystem::exists("dump.txt") && args.count("continue")) {
     std::ifstream f("dump.txt");
-    loadf(f);
+    loadf(f, "loadTree");
   } else {
     std::string x = "n";
     if (std::filesystem::exists("dump.txt")) {
@@ -204,7 +221,7 @@ int main(int argc, char *argv[]) {
     }
     if (x[0] == 'y' || x[0] == 'Y') {
       std::ifstream f("dump.txt");
-      loadf(f);
+      loadf(f, "dumpTree");
       f.close();
       INFO << "THR34DS, LOOK4H34D: [" << th << ' ' << l4h << "] \n";
       std::cin >> th >> l4h;
@@ -250,6 +267,16 @@ int main(int argc, char *argv[]) {
               x |= (1ull << j);
           filters.push_back(x);
         }
+        INFO << "left columns: \n";
+        for(int s=0; s<2; s++){
+          int cnt; std::cin >> cnt;
+          leftborder[s] = std::vector<uint64_t>(cnt);
+          for(int i=0; i<cnt; i++){
+            std::string t; std::cin >> t;
+            assert(t.size() == p);
+            for(int j=0; j<p; j++) if(t[j] == 'o') leftborder[s][i] |= (1ull << j);
+          }
+        }
       }
     }
   }
@@ -257,6 +284,10 @@ int main(int argc, char *argv[]) {
     if (i.substr(0, 2) == "dp")
       deplim = stoi(i.substr(2));
   if (args.contains("dfs")) searchMode = 1;
+  if (args.contains("smallOnly")) {
+    WARN << "Only running small nodes (L+R < 41).\n";
+    searchMode = 2;
+  }
   if (args.count("splitdistrib")) {
     // SPL1T S34RCH TO MUTU4LLY 1ND3P3ND3NT S4V3F1L3S
   }
@@ -264,9 +295,23 @@ int main(int argc, char *argv[]) {
     // WARN << tree.a[13].h[0][0].v << '\n';
     search(th);
     std::ofstream dump("dump.txt");
-    dumpf(dump);
+    dumpf(dump, "dumpTree");
     dump.close();
   } else if (args.count("distrib")) {
+    for(int i=0; i<tree.treeSize; i++) {
+      if(!(tree.a[i].tags & TAG_QUEUED)) continue;
+      if((tree.a[i].tags & TAG_REMOTE_QUEUED)) continue;
+      std::string pth = "tasks/";
+      pth += std::to_string(i/1000);
+      if(!std::filesystem::exists(pth))
+        std::filesystem::create_directory(pth);
+      std::ofstream dump_(pth+"/"+std::to_string(i)+".txt");
+      dumpf(dump_, "dumpWorkunit", i);
+      dump_.close();
+    }
+    std::ofstream dump("dump.txt");
+    dumpf(dump, "dumpTree");
+    dump.close();
   }
   return 0;
 }

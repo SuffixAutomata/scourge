@@ -49,13 +49,18 @@ void trans(std::vector<int> vars, std::vector<int> &inst) {
   }
 }
 
-bool Compl3t34bl3(const std::vector<uint64_t> &state, int phase,
+bool Compl3t34bl3(const std::vector<uint64_t> &state, int depth, int phase,
                   uint64_t enforce) {
   // auto idx = [&](int j) { return ((sym==1) ? min(j, width - j - 1) : j); };
   auto get = [&](int r, int j, int t) {
     if (t == p)
       t = 0, j = (sym == 2) ? width - j - 1 : j;
     r = r * p + t - phase;
+    int realRow = (r + depth - 2 * p) / p;
+    if (j <= -1 && (realRow < (int)leftborder[-j-1].size())) {
+      // WARN << j << ' ' << r << ' ' << t << '\n';
+      return (leftborder[-j-1][realRow] & (1ull << t)) ? 1 : 0;
+    }
     if (j <= -1 || j >= width)
       return 0;
     if (r < sz(state))
@@ -66,6 +71,7 @@ bool Compl3t34bl3(const std::vector<uint64_t> &state, int phase,
     int r = (row + phase) / p, t = (row + phase) % p;
     for (int j = -1; j <= width; j++)
       if (enforce & (1ull << (j + 1))) {
+        // WARN << row << ' ' << j << '\n';
         std::vector<int> ar = {get(r - 2, j - 1, t), get(r - 2, j, t),
                                get(r - 2, j + 1, t), get(r - 1, j - 1, t),
                                get(r - 1, j, t),     get(r - 1, j + 1, t),
@@ -111,6 +117,11 @@ void genNextRows(std::vector<uint64_t> &state, int depth, int ahead,
     if (t == p)
       t = 0, j = (sym == 2) ? width - j - 1 : j;
     r = r * p + t - phase;
+    int realRow = (r + depth - 2 * p) / p;
+    if (j <= -1 && (realRow < (int)leftborder[-j-1].size())) {
+      // WARN << j << ' ' << r << ' ' << t << '\n';
+      return (leftborder[-j-1][realRow] & (1ull << t)) ? 1 : 2;
+    }
     if (t == -1)
       r = sz(state);
     if (j <= -1 || j >= width)
@@ -135,7 +146,7 @@ void genNextRows(std::vector<uint64_t> &state, int depth, int ahead,
     if (t != p - 1)
       for (int j = 0; j < width; j++)
         if (enforce & (1ull << (j + 1)))
-          if (j < stator || width - j <= stator)
+          if (width - j <= stator)
             eqify(get(r, j, t), get(r, j, t + 1));
   }
   for (int row = 0; row < sz(state) + ahead; row++) {
@@ -177,6 +188,11 @@ bool existsNextRows(std::vector<uint64_t> &state, int depth, int ahead,
     if (t == p)
       t = 0, j = (sym == 2) ? width - j - 1 : j;
     r = r * p + t - phase;
+    int realRow = (r + depth - 2 * p) / p;
+    if (j <= -1 && (realRow < (int)leftborder[-j-1].size())) {
+      // WARN << j << ' ' << r << ' ' << t << '\n';
+      return (leftborder[-j-1][realRow] & (1ull << t)) ? 1 : 2;
+    }
     if (t == -1)
       r = sz(state);
     if (j <= -1 || j >= width)

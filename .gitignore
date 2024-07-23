@@ -3,3 +3,6 @@ search-*
 exp/
 dump*
 terezi
+testSearch/
+solver
+vriska

@@ -4,6 +4,7 @@
 #include <iostream>
 #include <vector>
 #include <ranges>
+#include <cassert>
 #include <type_traits>
 
 #define sz(x) ((int)(x.size()))
@@ -41,9 +42,12 @@ int overlap_ctz;
 #define SIDE0_ID(row) ((row) & remember)
 #define SIDE1_ID(row) ((row) & remember2)
 
-std::map<int, int> partialLoadOriginalNodeid;
+std::map<int, int> partialLoadNewNodeid;
+int partialLoadOriginalNodeid[200]; // 2 * p
+int wu_onx;
 
 std::vector<uint64_t> filters;
+std::vector<uint64_t> leftborder[2];
 
 std::vector<uint64_t> arithmeticDecode(const std::vector<uint64_t>& dwords, const std::vector<uint64_t>& maxvals) {
   std::vector<uint64_t> vals;
