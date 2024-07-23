@@ -1,3 +1,6 @@
 [submodule "cadical"]
 	path = cadical
 	url = https://github.com/arminbiere/cadical.git
+[submodule "mongoose"]
+	path = mongoose
+	url = https://github.com/cesanta/mongoose.git
