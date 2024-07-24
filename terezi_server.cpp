@@ -1,5 +1,6 @@
 #include <thread>
 #include <string>
+#include <iostream>
 
 #include "mongoose.h"
 
@@ -28,33 +29,19 @@ static void fn(struct mg_connection* c, int ev, void* ev_data) {
     mg_http_message* hm = (mg_http_message*) ev_data;
     if(mg_match(hm->uri, mg_str("/"), NULL)) {
       mg_http_reply(c, 200, "Content-Type: text/raw\n", "welcome\n");
-    } else if(mg_match(hm->uri, mg_str("/newtree"), NULL)) {
-      if (mg_match(hm->method, mg_str("GET"), NULL)) {
-        mg_http_reply(c, 200, "Content-Type: text/html\n", R"%(
-<!DOCTYPE html>
-<html>
-<body>
-  <textarea rows="4" cols="50" id="data"></textarea>
-  <button type="button" onclick="postData()">Submit</button>
-  <script>
-    function postData() {
-      var data = document.getElementById("data").value;
-      var xhr = new XMLHttpRequest();
-      xhr.open("POST", "/newtree", true);
-      xhr.setRequestHeader("Content-Type", "application/json");
-      xhr.send(JSON.stringify({ data: data }));
-    }
-  </script>
-</body>
-</html>)%");
-      } else if (mg_match(hm->method, mg_str("POST"), NULL)) {
-        // ..
-      }
+    } else if(mg_match(hm->uri, mg_str("/admin"), NULL)) {
+      mg_http_serve_opts opts = {
+        .mime_types = "html=text/html"
+      };
+      mg_http_serve_file(c, hm, "admin.html", &opts);
+    } else if(mg_match(hm->uri, mg_str("/admin-websocket"), NULL)) {
+      mg_ws_upgrade(c, hm, NULL);
     } else if (mg_match(hm->uri, mg_str("/fast"), NULL)) {
       // Single-threaded code path, for performance comparison
       // The /fast URI responds immediately
       mg_http_reply(c, 200, "Host: foo.com\n", "hi\n");
     } else {
+      MG_INFO(("Triggered multithreading, %.*s", hm->uri.len, hm->uri.buf));
       // Multithreading code path
       // thread_data* data = (thread_data*) calloc(1, sizeof(*data));  // Worker owns it
       thread_data* data = new thread_data;
@@ -65,6 +52,10 @@ static void fn(struct mg_connection* c, int ev, void* ev_data) {
       std::thread t(thread_function, data);
       t.detach();
     }
+  } else if(ev == MG_EV_OPEN) {
+  } else if(ev == MG_EV_WS_MSG) {
+    mg_ws_message* wm = (mg_ws_message*) ev_data;
+    mg_ws_send(c, wm->data.buf, wm->data.len, WEBSOCKET_OP_TEXT);
   } else if (ev == MG_EV_WAKEUP) {
     // struct mg_str *data = (struct mg_str *) ev_data;
     std::string* data = * (std::string**) ((mg_str*) ev_data)->buf;
