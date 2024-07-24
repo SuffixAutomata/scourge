@@ -1,23 +1,7 @@
 #include <thread>
-
-// Outline built from multi-threading example and jerryrigged into C++
+#include <string>
 
 #include "mongoose.h"
-
-// static void start_thread(void *(*f)(void *), void *p) {
-// #ifdef _WIN32
-//   _beginthread((void(__cdecl *)(void *)) f, 0, p);
-// #else
-// #define closesocket(x) close(x)
-// #include <pthread.h>
-//   pthread_t thread_id = (pthread_t) 0;
-//   pthread_attr_t attr;
-//   (void) pthread_attr_init(&attr);
-//   (void) pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-//   pthread_create(&thread_id, &attr, f, p);
-//   pthread_attr_destroy(&attr);
-// #endif
-// }
 
 struct thread_data {
   struct mg_mgr *mgr;
@@ -30,10 +14,11 @@ static void* thread_function(void* param) {
   // struct thread_data *p = (struct thread_data *) param;
   thread_data* p = (thread_data*) param;
   sleep(2);                                 // Simulate long execution
-  mg_wakeup(p->mgr, p->conn_id, "hi!", 3);  // Respond to parent
+  std::string* resp = new std::string {"hi"};
+  mg_wakeup(p->mgr, p->conn_id, &resp, sizeof(resp));  // Respond to parent
   free((void *) p->message.buf);            // Free all resources that were
-  // free(p);                                  // passed to us
-  delete p;                                  // passed to us
+  // free(p);                               // passed to us
+  delete p;                                 // passed to us
   return NULL;
 }
 
@@ -41,10 +26,34 @@ static void* thread_function(void* param) {
 static void fn(struct mg_connection* c, int ev, void* ev_data) {
   if (ev == MG_EV_HTTP_MSG) {
     mg_http_message* hm = (mg_http_message*) ev_data;
-    if (mg_match(hm->uri, mg_str("/fast"), NULL)) {
+    if(mg_match(hm->uri, mg_str("/"), NULL)) {
+      mg_http_reply(c, 200, "Content-Type: text/raw\n", "welcome\n");
+    } else if(mg_match(hm->uri, mg_str("/newtree"), NULL)) {
+      if (mg_match(hm->method, mg_str("GET"), NULL)) {
+        mg_http_reply(c, 200, "Content-Type: text/html\n", R"%(
+<!DOCTYPE html>
+<html>
+<body>
+  <textarea rows="4" cols="50" id="data"></textarea>
+  <button type="button" onclick="postData()">Submit</button>
+  <script>
+    function postData() {
+      var data = document.getElementById("data").value;
+      var xhr = new XMLHttpRequest();
+      xhr.open("POST", "/newtree", true);
+      xhr.setRequestHeader("Content-Type", "application/json");
+      xhr.send(JSON.stringify({ data: data }));
+    }
+  </script>
+</body>
+</html>)%");
+      } else if (mg_match(hm->method, mg_str("POST"), NULL)) {
+        // ..
+      }
+    } else if (mg_match(hm->uri, mg_str("/fast"), NULL)) {
       // Single-threaded code path, for performance comparison
       // The /fast URI responds immediately
-      mg_http_reply(c, 200, "Host: foo.com\r\n", "hi\n");
+      mg_http_reply(c, 200, "Host: foo.com\n", "hi\n");
     } else {
       // Multithreading code path
       // thread_data* data = (thread_data*) calloc(1, sizeof(*data));  // Worker owns it
@@ -58,8 +67,9 @@ static void fn(struct mg_connection* c, int ev, void* ev_data) {
     }
   } else if (ev == MG_EV_WAKEUP) {
     // struct mg_str *data = (struct mg_str *) ev_data;
-    mg_str* data = (mg_str*) ev_data;
-    mg_http_reply(c, 200, "", "Result: %.*s\n", data->len, data->buf);
+    std::string* data = * (std::string**) ((mg_str*) ev_data)->buf;
+    mg_http_reply(c, 200, "", "Result: %s\n", data->c_str());
+    delete data;
   }
 }
 
