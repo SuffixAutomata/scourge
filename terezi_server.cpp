@@ -1,8 +1,100 @@
-#include <thread>
-#include <string>
-#include <iostream>
+#include <bits/stdc++.h>
 
 #include "mongoose.h"
+
+int p, width, sym, l4h;
+int maxwid, stator;
+
+namespace _searchtree {
+int depths[1000], total[1000];
+struct node { uint64_t row; int depth, shift, parent; char state; };
+node* tree = new node[16777216];
+int treeSize = 0, treeAlloc = 16777216;
+// std::vector<uint64_t> filters;
+// std::vector<uint64_t> leftborder[2];
+
+void dumpTree(std::string fn) {
+  std::ofstream fx(fn);
+  fx<<p<<'.'<<width<<'.'<<sym<<'.'<<stator<<'.'<<"period.width.sym.stator"<<'\n';  
+  fx<<treeSize<<'\n';
+  for(int i=0;i<treeSize;i++)fx<<tree[i].row<<' '<<tree[i].shift<<' '<<tree[i].parent<<' '<<tree[i].state<<'\n';
+  fx.flush(); fx.close();
+}
+
+void loadTree(std::string fn) {
+  using namespace std;
+  ifstream fx(fn);
+  string s; fx>>s; for(char&c:s) if(c=='.') c=' ';
+  istringstream gx(s); vector<string> keys; map<string, string> altkeys; 
+  string key; while(gx >> key) keys.push_back(key);
+  for(int i=0; i<keys.size()/2; i++) altkeys[keys[i+keys.size()/2]] = keys[i];
+  p = stoi(altkeys["period"]); width = stoi(altkeys["width"]); sym = stoi(altkeys["sym"]);
+  if(altkeys.count("stator")) stator = stoi(altkeys["stator"]);
+  fx>>treeSize;
+  for(int i=0;i<treeSize;i++){
+    fx>>tree[i].row>>tree[i].shift>>tree[i].parent>>tree[i].state;
+    tree[i].depth = 1 + (i ? tree[tree[i].parent].depth : 0);
+  }
+}
+
+void flushTree(node* dest = tree) { assert(0); }
+
+int newNode() {
+  if(treeSize == treeAlloc)
+    treeAlloc *= 2, flushTree(new node[treeAlloc]);
+  // if((treeSize - time(0)) % 8192 == 0) flushTree();
+  tree[treeSize] = {0,0,0,0,'0'};
+  return treeSize++;
+}
+
+std::vector<uint64_t> getState(int onx) {
+  std::vector<uint64_t> mat;
+  while(onx != -1)
+    mat.push_back(tree[onx].row), onx = tree[onx].parent;
+  std::reverse(mat.begin(), mat.end());
+  return std::vector<uint64_t>(mat.end() - 2*p, mat.end());
+}
+
+int getWidth(int i) {
+  uint64_t bito = 0;
+  for(uint64_t x:getState(i)){ bito |= x; }
+  return 64-__builtin_clzll(bito)-__builtin_ctzll(bito);
+}
+}; using namespace _searchtree;
+
+int bdep = 0;
+void emit(int state, bool d = true){
+  using namespace std;
+  vector<uint64_t> mat;
+  while(state != -1)
+    mat.push_back(tree[state].row), state = tree[state].parent;
+  reverse(mat.begin(), mat.end());
+  if(!d) {
+    if(((int)(mat.size())) <= bdep) return;
+    bdep = mat.size();
+  }else
+    cout<<"[[OSC1LL4TOR COMPL3T3!!!]]"<<endl;
+  std::string rle;
+  int cnt = 0, cur = 0;
+  auto f = [&](char x) {
+    if(x != cur) {
+      if(cnt >= 2) rle += to_string(cnt);
+      if(cnt >= 1) rle += (char)cur;
+      cnt = 0, cur = x;
+    }
+    cnt++;
+  };
+  for(int r=0; r*p<((int)(mat.size())); r++){
+    if(r) f('$');
+    for(int x=r*p; x<((int)(mat.size())) && x<(r+1)*p; x++){
+      for(int j=0;j<width;j++) f("bo"[!!(mat[x]&(1ull<<j))]);
+      f('b');f('b');f('b');
+    }
+  }
+  f('!'); 
+  cout << "x = 0, y = 0, rule = B3/S23\n" + rle + '!' << endl;
+}
+
 
 struct thread_data {
   struct mg_mgr *mgr;
@@ -10,15 +102,12 @@ struct thread_data {
   struct mg_str message;  // Original HTTP request
 };
 
-// static void *thread_function(void *param) {
 static void* thread_function(void* param) {
-  // struct thread_data *p = (struct thread_data *) param;
   thread_data* p = (thread_data*) param;
   sleep(2);                                 // Simulate long execution
   std::string* resp = new std::string {"hi"};
   mg_wakeup(p->mgr, p->conn_id, &resp, sizeof(resp));  // Respond to parent
   free((void *) p->message.buf);            // Free all resources that were
-  // free(p);                               // passed to us
   delete p;                                 // passed to us
   return NULL;
 }
@@ -37,8 +126,13 @@ static void fn(struct mg_connection* c, int ev, void* ev_data) {
       mg_http_serve_file(c, hm, "admin.html", &opts);
     } else if(mg_match(hm->uri, mg_str("/admin-websocket"), NULL)) {
       mg_ws_upgrade(c, hm, NULL);
+      c->data[0] = 'A';
     }
     /* connected units end*/
+    else if (mg_match(hm->uri, mg_str("/worker-websocket"), NULL)) {
+      mg_ws_upgrade(c, hm, NULL);
+      c->data[0] = 'W'; c->data[1] = '0'; // worker, non-initialized
+    }
     else if(mg_match(hm->uri, mg_str("/getwork"), NULL)) {
       // load from dynamic work queue...
     } else if(mg_match(hm->uri, mg_str("/returnwork"), NULL)) {
@@ -47,22 +141,27 @@ static void fn(struct mg_connection* c, int ev, void* ev_data) {
     /* ?? */
     else {
       MG_INFO(("Triggered multithreading, %.*s", hm->uri.len, hm->uri.buf));
-      // Multithreading code path
-      // thread_data* data = (thread_data*) calloc(1, sizeof(*data));  // Worker owns it
       thread_data* data = new thread_data;
       data->message = mg_strdup(hm->message);               // Pass message
       data->conn_id = c->id;
       data->mgr = c->mgr;
-      // start_thread(thread_function, data);  // Start thread and pass data
       std::thread t(thread_function, data);
       t.detach();
     }
   } else if(ev == MG_EV_OPEN) {
   } else if(ev == MG_EV_WS_MSG) {
     mg_ws_message* wm = (mg_ws_message*) ev_data;
-    // mg_ws_send(c, wm->data.buf, wm->data.len, WEBSOCKET_OP_TEXT);
-    auto resp = mg_str("Loading dump.txt..."); // sorry this is cheating
-    mg_ws_send(c, resp.buf, resp.len, WEBSOCKET_OP_TEXT);
+    if(c->data[0] == 'W') {
+      if(c->data[1] == '0') {
+        // First message, initialization, should be of the form
+        // [contributor name]&&[ephemeral - 0/1]
+        c->data[1] = '1';
+      }
+    } else if(c->data[0] == 'A') {
+      // mg_ws_send(c, wm->data.buf, wm->data.len, WEBSOCKET_OP_TEXT);
+      auto resp = mg_str("Loading dump.txt..."); // sorry this is cheating
+      mg_ws_send(c, resp.buf, resp.len, WEBSOCKET_OP_TEXT);
+    }
   } else if (ev == MG_EV_WAKEUP) {
     // struct mg_str *data = (struct mg_str *) ev_data;
     std::string* data = * (std::string**) ((mg_str*) ev_data)->buf;
