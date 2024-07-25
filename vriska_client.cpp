@@ -4,6 +4,9 @@
 #include "cadical/src/cadical.hpp"
 #include "cqueue/bcq.h"
 
+int p, width, sym, l4h;
+int maxwid, stator;
+
 #include "logic.h"
 
 namespace _logic {

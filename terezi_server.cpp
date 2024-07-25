@@ -1,8 +1,8 @@
-#include <bits/stdc++.h>
-
 #include "mongoose.h"
 
-#include "logic.h"
+#include <bits/stdc++.h>
+
+#include "cqueue/bcq.h"
 
 int p, width, sym, l4h;
 int maxwid, stator;
@@ -65,6 +65,8 @@ int getWidth(int i) {
 }
 }; using namespace _searchtree;
 
+#include "logic.h"
+
 int bdep = 0;
 void emit(int state, bool d = true){
   using namespace std;
@@ -99,24 +101,64 @@ void emit(int state, bool d = true){
 }
 
 
-struct thread_data {
-  struct mg_mgr *mgr;
+struct handlerMessage {
+  int flag = 0; // 1 - broadcast, 2 - halt all connections, 4 - connection closed,
   unsigned long conn_id;  // Parent connection ID
-  struct mg_str message;  // Original HTTP request
+  std::string message;
 };
 
-static void* thread_function(void* param) {
-  thread_data* p = (thread_data*) param;
-  sleep(2);                                 // Simulate long execution
-  std::string* resp = new std::string {"hi"};
-  mg_wakeup(p->mgr, p->conn_id, &resp, sizeof(resp));  // Respond to parent
-  free((void *) p->message.buf);            // Free all resources that were
-  delete p;                                 // passed to us
-  return NULL;
+struct wakeupCall {
+  int flag = 0; // 1 - WS, 2 - WS close conn
+  std::string message;
+};
+
+std::map<unsigned long, mg_mgr*> adminConnections;
+std::mutex adminConnections_mutex;
+moodycamel::BlockingConcurrentQueue<handlerMessage> adminConsoleHandler_queue;
+bool adminConsoleHandler_running = false;
+void adminConsoleHandler() {
+  MG_INFO(("Admin console handler started running"));
+  handlerMessage nx;
+  while (adminConsoleHandler_queue.wait_dequeue(nx), nx.flag != 2) {
+    if(nx.flag == 1) {
+      const std::lock_guard<std::mutex> lock(adminConnections_mutex);
+      for(auto& [conn, mgr] : adminConnections){
+        wakeupCall* resp = new wakeupCall {1, nx.message};
+        mg_wakeup(mgr, conn, &resp, sizeof(resp));
+      }
+      continue;
+    }
+    if(nx.flag == 4) {
+      MG_INFO(("connection close triggered"));
+      const std::lock_guard<std::mutex> lock(adminConnections_mutex);
+      adminConnections.erase(adminConnections.find(nx.conn_id));
+      continue;
+    }
+    // normal
+    mg_mgr* mgr;
+    {
+      const std::lock_guard<std::mutex> lock(adminConnections_mutex);
+      mgr = adminConnections[nx.conn_id];
+    }
+    if(nx.message == "load") {
+      wakeupCall* resp = new wakeupCall {1, "Loading dump.txt"};
+      mg_wakeup(mgr, nx.conn_id, &resp, sizeof(resp));
+    }
+    if(nx.message == "remoteclose") {
+      wakeupCall* resp = new wakeupCall {3, "bye"};
+      mg_wakeup(mgr, nx.conn_id, &resp, sizeof(resp));
+    }
+  }
+  // halt all connections
+  {
+    const std::lock_guard<std::mutex> lock(adminConnections_mutex);
+    // hmm does this trigger nx flag 4 ...?
+    adminConnections.clear();
+  }
 }
 
 // HTTP request callback
-static void fn(struct mg_connection* c, int ev, void* ev_data) {
+void fn(struct mg_connection* c, int ev, void* ev_data) {
   if (ev == MG_EV_HTTP_MSG) {
     mg_http_message* hm = (mg_http_message*) ev_data;
     /* admin end */
@@ -129,12 +171,22 @@ static void fn(struct mg_connection* c, int ev, void* ev_data) {
       mg_http_serve_file(c, hm, "admin.html", &opts);
     } else if(mg_match(hm->uri, mg_str("/admin-websocket"), NULL)) {
       mg_ws_upgrade(c, hm, NULL);
-      c->data[0] = 'A';
+      c->data[0] = 'W'; // websocket
+      c->data[1] = 'A'; // admin
+      {
+        const std::lock_guard<std::mutex> lock(adminConnections_mutex);
+        adminConnections[c->id] = c->mgr;
+      }
+      if(adminConsoleHandler_running == false) {
+        adminConsoleHandler_running = true;
+        std::thread t(adminConsoleHandler); t.detach();
+      }
     }
     /* connected units end*/
     else if (mg_match(hm->uri, mg_str("/worker-websocket"), NULL)) {
       mg_ws_upgrade(c, hm, NULL);
-      c->data[0] = 'W'; c->data[1] = '0'; // worker, non-initialized
+      c->data[0] = 'W'; // websocket
+      c->data[1] = 'W'; // worker
     }
     else if(mg_match(hm->uri, mg_str("/getwork"), NULL)) {
       // load from dynamic work queue...
@@ -143,15 +195,12 @@ static void fn(struct mg_connection* c, int ev, void* ev_data) {
     } 
     /* ?? */
     else {
-      MG_INFO(("Triggered multithreading, %.*s", hm->uri.len, hm->uri.buf));
-      thread_data* data = new thread_data;
-      data->message = mg_strdup(hm->message);               // Pass message
-      data->conn_id = c->id;
-      data->mgr = c->mgr;
-      std::thread t(thread_function, data);
-      t.detach();
+      MG_INFO(("unknown endpoint %.*s", hm->uri.len, hm->uri.buf));
+      mg_http_reply(c, 404, "Content-Type: text/raw\n", "what\n");
     }
   } else if(ev == MG_EV_OPEN) {
+  } else if(ev == MG_EV_WS_CTL) {
+    // handle connection closing
   } else if(ev == MG_EV_WS_MSG) {
     mg_ws_message* wm = (mg_ws_message*) ev_data;
     if(c->data[0] == 'W') {
@@ -171,20 +220,27 @@ static void fn(struct mg_connection* c, int ev, void* ev_data) {
         }
       }
     } else if(c->data[0] == 'A') {
-      // mg_ws_send(c, wm->data.buf, wm->data.len, WEBSOCKET_OP_TEXT);
-      auto resp = mg_str("Loading dump.txt..."); // sorry this is cheating
-      mg_ws_send(c, resp.buf, resp.len, WEBSOCKET_OP_TEXT);
+
+      // adminConsoleHandler_queue.enqueue()
     }
   } else if (ev == MG_EV_WAKEUP) {
     // struct mg_str *data = (struct mg_str *) ev_data;
-    std::string* data = * (std::string**) ((mg_str*) ev_data)->buf;
-    mg_http_reply(c, 200, "", "Result: %s\n", data->c_str());
+    wakeupCall* data = * (wakeupCall**) ((mg_str*) ev_data)->buf;
+    if(data->flag & 1) {
+      auto sv = mg_str(data->message.c_str());
+      mg_ws_send(c, sv.buf, sv.len, WEBSOCKET_OP_TEXT);
+      if(data->flag & 2) {
+        mg_ws_send(c, NULL, 0, WEBSOCKET_OP_CLOSE);
+      }
+    } else {
+      mg_http_reply(c, 200, "", "Result: %s\n", data->message.c_str());
+    }
     delete data;
   }
 }
 
 int main(void) {
-  struct mg_mgr mgr;
+  mg_mgr mgr;
   mg_mgr_init(&mgr);        // Initialise event manager
   mg_log_set(MG_LL_DEBUG);  // Set debug log level
   mg_http_listen(&mgr, "http://localhost:8000", fn, NULL);  // Create listener
