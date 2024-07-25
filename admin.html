@@ -1,6 +1,4 @@
 <!DOCTYPE html>
-<!--hacked from https://github.com/cesanta/mongoose/blob/master/tutorials/websocket/websocket-server/test.html-->
-
 <html lang="en">
   <body>
     <div id="connect">Disconnected</div>
@@ -15,7 +13,7 @@
   </body>
   <script>
     var ws, E = function(id) { return document.getElementById(id); };
-    var url = "http://localhost:8000/admin-websocket";
+    var url = "/admin-websocket";
     var connect = E('connect'), message = E('message'), send = E('send'), log = E('log');
     var enable = function(en) { 
       message.disabled = send.disabled = !en; url.disabled = en; 
@@ -38,7 +36,7 @@
     };
     send.onclick = function() {
       if (!ws) return;
-      if(message.value == "close") ws.onclose();
+      if(message.value == "close") ws.close();
       else {
         ws.send(message.value);
         appendToLog('SENT: ' + message.value);

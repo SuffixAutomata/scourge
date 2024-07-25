@@ -9,11 +9,12 @@ int maxwid, stator;
 
 namespace _searchtree {
 int depths[1000], total[1000];
-struct node { uint64_t row; int depth, shift, parent; char state; };
+struct node { uint64_t row; int depth, shift, parent, contrib; char state; };
 node* tree = new node[16777216];
 int treeSize = 0, treeAlloc = 16777216;
 std::vector<uint64_t> filters;
 std::vector<uint64_t> leftborder[2];
+std::vector<std::string> contributors; std::map<std::string, int> contributorIDs;
 
 void dumpTree(std::string fn) {
   std::ofstream fx(fn);
@@ -21,7 +22,10 @@ void dumpTree(std::string fn) {
   fx << filters.size(); for(auto s:filters){fx << ' ' << s;} fx << '\n';
   for(int t=0;t<2;t++){ fx<<leftborder[t].size(); for(auto s:leftborder[t]){fx<<' '<<s;}fx<<'\n';}
   fx<<treeSize<<'\n';
-  for(int i=0;i<treeSize;i++)fx<<tree[i].row<<' '<<tree[i].shift<<' '<<tree[i].parent<<' '<<tree[i].state<<'\n';
+  for(int i=0;i<treeSize;i++)
+    fx<<tree[i].row<<' '<<tree[i].shift<<' '<<tree[i].parent<<' '<<tree[i].contrib<<' '<<tree[i].state<<'\n';
+  fx<<contributorIDs.size()<<'\n';
+  for(auto s:contributors) fx<<s<<'\n';
   fx.flush(); fx.close();
 }
 
@@ -35,8 +39,14 @@ void loadTree(std::string fn) {
   for(int t=0;t<FS;t++)fx>>leftborder[pp][t];}
   fx>>treeSize;
   for(int i=0;i<treeSize;i++){
-    fx>>tree[i].row>>tree[i].shift>>tree[i].parent>>tree[i].state;
+    fx>>tree[i].row>>tree[i].shift>>tree[i].parent>>tree[i].contrib>>tree[i].state;
     tree[i].depth = 1 + (i ? tree[tree[i].parent].depth : 0);
+  }
+  fx>>FS;
+  contributors=std::vector<std::string>(FS);
+  for(int i=0; i<FS;i++) {
+    fx>>contributors[i];
+    contributorIDs[contributors[i]] = i;
   }
 }
 
@@ -122,7 +132,9 @@ std::mutex adminConnections_mutex;
 moodycamel::BlockingConcurrentQueue<handlerMessage> adminConsoleHandler_queue;
 bool adminConsoleHandler_running = false;
 void adminConsoleHandler() {
-  MG_INFO(("Admin console handler started running"));
+  assert(!adminConsoleHandler_running);
+  adminConsoleHandler_running = true;
+  // MG_INFO(("Admin console handler started running"));
   handlerMessage nx;
   while (adminConsoleHandler_queue.wait_dequeue(nx), nx.flag != 2) {
     MG_INFO(("handling %d - %s", nx.conn_id, nx.message.c_str()));
@@ -135,10 +147,10 @@ void adminConsoleHandler() {
       continue;
     }
     if(nx.flag == 4) {
-      MG_INFO(("\033[1;1;31m## connection close handler triggered ## \033[0m"));
+      // MG_INFO(("\033[1;1;31m## connection close handler triggered ## \033[0m"));
       const std::lock_guard<std::mutex> lock(adminConnections_mutex);
       adminConnections.erase(adminConnections.find(nx.conn_id));
-      MG_INFO(("remaining conns: %llu", adminConnections.size()));
+      // MG_INFO(("remaining conns: %llu", adminConnections.size()));
       continue;
     }
     // normal
@@ -164,6 +176,7 @@ void adminConsoleHandler() {
     // hmm does this trigger nx flag 4 ...?
     adminConnections.clear();
   }
+  adminConsoleHandler_running = false;
 }
 
 // HTTP request callback
@@ -174,9 +187,7 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
     if(mg_match(hm->uri, mg_str("/"), NULL)) {
       mg_http_reply(c, 200, "Content-Type: text/raw\n", "welcome\n");
     } else if(mg_match(hm->uri, mg_str("/admin"), NULL)) {
-      mg_http_serve_opts opts = {
-        .mime_types = "html=text/html"
-      };
+      mg_http_serve_opts opts = {.mime_types = "html=text/html"};
       mg_http_serve_file(c, hm, "admin.html", &opts);
     } else if(mg_match(hm->uri, mg_str("/admin-websocket"), NULL)) {
       mg_ws_upgrade(c, hm, NULL);
@@ -187,7 +198,6 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
         adminConnections[c->id] = c->mgr;
       }
       if(adminConsoleHandler_running == false) {
-        adminConsoleHandler_running = true;
         std::thread t(adminConsoleHandler); t.detach();
       }
     }
@@ -210,33 +220,35 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
   } else if(ev == MG_EV_OPEN) {
     MG_INFO(("open triggered"));
   } else if(ev == MG_EV_CLOSE) {
-    MG_INFO(("close triggered"));
+    MG_INFO(("close triggered, %d", c->id));
   } else if(ev == MG_EV_WS_CTL) {
     mg_ws_message* wm = (mg_ws_message*) ev_data;
     uint32_t s = (wm->flags) & 0xF0;
     MG_INFO(("\033[1;1;31mwebsocket control triggered, %.*s, %x \033[0m", wm->data.len, wm->data.buf, s));
     // what's this?
     if(s == 0x80) {
-      // adminConsoleHandler_queue.enqueue({4, c->id, NULL});
+      adminConsoleHandler_queue.enqueue({4, c->id, ""});
     }
   } else if(ev == MG_EV_WS_MSG) {
     mg_ws_message* wm = (mg_ws_message*) ev_data;
     if(c->data[1] == 'W') {
-      if(c->data[1] == '0') {
-        // First message, initialization, should be of the form
-        // [contributor name]&&[ephemeral - 0/1]&&[...]
-        struct mg_str caps[4];
-        int ephemeral;
-        if (mg_match(wm->data, mg_str("#&&#&&#"), caps) &&
-            mg_str_to_num(caps[1], 10, &ephemeral, sizeof(ephemeral)) &&
-            (0 <= ephemeral && ephemeral <= 1)) {
-          // establish connection
-          c->data[1] = '1';
-          // caps[0] holds `foo`, caps[1] holds `bar`.
-        } else {
-          // close connection
-        }
-      }
+      auto sv = mg_str("hey hi!!");
+      mg_ws_send(c, sv.buf, sv.len, WEBSOCKET_OP_TEXT);
+      // if(c->data[1] == '0') {
+      //   // First message, initialization, should be of the form
+      //   // [contributor name]&&[ephemeral - 0/1]&&[...]
+      //   struct mg_str caps[4];
+      //   int ephemeral;
+      //   if (mg_match(wm->data, mg_str("#&&#&&#"), caps) &&
+      //       mg_str_to_num(caps[1], 10, &ephemeral, sizeof(ephemeral)) &&
+      //       (0 <= ephemeral && ephemeral <= 1)) {
+      //     // establish connection
+      //     c->data[1] = '1';
+      //     // caps[0] holds `foo`, caps[1] holds `bar`.
+      //   } else {
+      //     // close connection
+      //   }
+      // }
     } else if(c->data[1] == 'A') {
       adminConsoleHandler_queue.enqueue({0, c->id, _mg_str_to_stdstring(wm->data)});
     }

@@ -1,4 +1,6 @@
 #include <thread>
+#include <set>
+#include <vector>
 
 #include "mongoose.h"
 #include "cadical/src/cadical.hpp"
@@ -6,6 +8,8 @@
 
 int p, width, sym, l4h;
 int maxwid, stator;
+std::vector<uint64_t> filters;
+std::vector<uint64_t> leftborder[2];
 
 #include "logic.h"
 
@@ -33,7 +37,7 @@ void genNextRows(std::vector<uint64_t> &state, int depth, int ahead, auto fn) {
   assert(p * 2 == sz(state));
   int phase = depth % p;
   std::vector<int> inst = {1, 0, -2, 0};
-  auto idx = [&](int j) { return ((sym == 1) ? min(j, width - j - 1) : j); };
+  auto idx = [&](int j) { return ((sym == 1) ? std::min(j, width - j - 1) : j); };
   auto get = [&](int r, int j, int t) {
     if (t == p)
       t = 0, j = (sym == 2) ? width - j - 1 : j;
@@ -95,6 +99,33 @@ void genNextRows(std::vector<uint64_t> &state, int depth, int ahead, auto fn) {
 }
 }
 
+void fn(mg_connection* c, int ev, void* ev_data) {
+  if (ev == MG_EV_ERROR) {
+    std::cerr << "connection error: " << c->id << '\n';
+  } else if (ev == MG_EV_WS_OPEN) {
+    mg_ws_send(c, "hello", 5, WEBSOCKET_OP_TEXT);
+  } else if (ev == MG_EV_WS_MSG) {
+    mg_ws_message* wm = (mg_ws_message*)ev_data;
+    printf("reply: %.*s\n", (int) wm->data.len, wm->data.buf);
+  }
+
+  if (ev == MG_EV_ERROR || ev == MG_EV_CLOSE || ev == MG_EV_WS_MSG) {
+    *(bool *) (c->fn_data) = true;
+  }
+}
+
 int main(int argc, char* argv[]) {
-  // args: -h host -i worker id/hostname -t timeout -p threads
+  // args: host id/name timeout threads
+  if(argc != 5) {
+    std::cerr << "usage: " << argv[0] << " hostURL contributorID timeout threads\n";
+    return 1;
+  }
+  std::string host_endpoint = argv[1]; host_endpoint = "http://" + host_endpoint + "/worker-websocket";
+  mg_mgr mgr;
+  bool done = false;
+  mg_connection* c;
+  mg_mgr_init(&mgr);
+  c = mg_ws_connect(&mgr, host_endpoint.c_str(), fn, &done, NULL);
+  while (c && done == false) mg_mgr_poll(&mgr, 1000);
+  mg_mgr_free(&mgr);
 }
