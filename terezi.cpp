@@ -116,7 +116,7 @@ std::string _mg_str_to_stdstring(mg_str x) {
 }
 
 
-struct handlerMessage {
+struct adminhandlerMessage {
   int flag = 0; // 1 - broadcast, 2 - halt all connections, 4 - connection closed,
   unsigned long conn_id;  // Parent connection ID
   std::string message;
@@ -129,17 +129,18 @@ struct wakeupCall {
 
 std::map<unsigned long, mg_mgr*> adminConnections;
 std::mutex adminConnections_mutex;
-moodycamel::BlockingConcurrentQueue<handlerMessage> adminConsoleHandler_queue;
+moodycamel::BlockingConcurrentQueue<adminhandlerMessage> adminConsoleHandler_queue;
 bool adminConsoleHandler_running = false;
 void adminConsoleHandler() {
   assert(!adminConsoleHandler_running);
   adminConsoleHandler_running = true;
   // MG_INFO(("Admin console handler started running"));
-  handlerMessage nx;
+  adminhandlerMessage nx;
   while (adminConsoleHandler_queue.wait_dequeue(nx), nx.flag != 2) {
     MG_INFO(("handling %d - %s", nx.conn_id, nx.message.c_str()));
     if(nx.flag == 1) {
       const std::lock_guard<std::mutex> lock(adminConnections_mutex);
+      std::cerr << "broadcasting to "<<adminConnections.size()<<" hosts\n";
       for(auto& [conn, mgr] : adminConnections){
         wakeupCall* resp = new wakeupCall {1, nx.message};
         mg_wakeup(mgr, conn, &resp, sizeof(resp));
@@ -159,9 +160,15 @@ void adminConsoleHandler() {
       const std::lock_guard<std::mutex> lock(adminConnections_mutex);
       mgr = adminConnections[nx.conn_id];
     }
-    if(nx.message == "load") {
+    std::stringstream s(nx.message);
+    std::string com; s>>com;
+    if(com == "load") {
       wakeupCall* resp = new wakeupCall {1, "Loading dump.txt"};
       mg_wakeup(mgr, nx.conn_id, &resp, sizeof(resp));
+    } else if(com == "bcast") {
+      wakeupCall* resp = new wakeupCall {1, "Broadcasting..."};
+      mg_wakeup(mgr, nx.conn_id, &resp, sizeof(resp));
+      adminConsoleHandler_queue.enqueue({1, 0, nx.message});
     } else if(nx.message == "remoteclose") {
       wakeupCall* resp = new wakeupCall {3, "bye"};
       mg_wakeup(mgr, nx.conn_id, &resp, sizeof(resp));
@@ -177,6 +184,74 @@ void adminConsoleHandler() {
     adminConnections.clear();
   }
   adminConsoleHandler_running = false;
+}
+
+struct workerhandlerMessage {
+  int flag = 0; // 1 - broadcast, 2 - halt all connections, 4 - connection closed, 8 - ping time
+  unsigned long conn_id;  // Parent connection ID
+  std::string message;
+};
+
+std::map<unsigned long, mg_mgr*> workerConnections;
+std::mutex workerConnections_mutex;
+moodycamel::BlockingConcurrentQueue<workerhandlerMessage> workerHandler_queue;
+bool workerHandler_running = false;
+void workerHandler() {
+  assert(!workerHandler_running);
+  workerHandler_running = true;
+  // MG_INFO(("Admin console handler started running"));
+  workerhandlerMessage nx;
+  while (workerHandler_queue.wait_dequeue(nx), nx.flag != 2) {
+    MG_INFO(("handling %d - %s", nx.conn_id, nx.message.c_str()));
+    if(nx.flag == 1) {
+      const std::lock_guard<std::mutex> lock(workerConnections_mutex);
+      std::cerr << "broadcasting to "<<workerConnections.size()<<" hosts\n";
+      for(auto& [conn, mgr] : workerConnections){
+        wakeupCall* resp = new wakeupCall {1, nx.message};
+        mg_wakeup(mgr, conn, &resp, sizeof(resp));
+      }
+      continue;
+    }
+    if(nx.flag == 4) {
+      // MG_INFO(("\033[1;1;31m## connection close handler triggered ## \033[0m"));
+      const std::lock_guard<std::mutex> lock(workerConnections_mutex);
+      workerConnections.erase(workerConnections.find(nx.conn_id));
+      continue;
+    }
+    if(nx.flag == 8) {
+      const std::lock_guard<std::mutex> lock(workerConnections_mutex);
+      // disconnect hosts that did not respond to last ping...
+      std::cerr << "pinging "<<workerConnections.size()<<" hosts\n";
+      for(auto& [conn, mgr] : workerConnections){
+        wakeupCall* resp = new wakeupCall {1, "ping"};
+        mg_wakeup(mgr, conn, &resp, sizeof(resp));
+      }
+      continue;
+    }
+    // normal
+    mg_mgr* mgr;
+    {
+      const std::lock_guard<std::mutex> lock(workerConnections_mutex);
+      mgr = workerConnections[nx.conn_id];
+    }
+    std::stringstream s(nx.message);
+    std::string com; s>>com;
+    if(com == "disconnect") {
+      wakeupCall* resp = new wakeupCall {3, "bye"};
+      mg_wakeup(mgr, nx.conn_id, &resp, sizeof(resp));
+      // release all workunits...
+    } else {
+      wakeupCall* resp = new wakeupCall {1, "huh?"};
+      mg_wakeup(mgr, nx.conn_id, &resp, sizeof(resp));
+    }
+  }
+  // halt all connections
+  {
+    const std::lock_guard<std::mutex> lock(workerConnections_mutex);
+    // ...
+    workerConnections.clear();
+  }
+  workerHandler_running = false;
 }
 
 // HTTP request callback
@@ -257,7 +332,8 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
     wakeupCall* data = * (wakeupCall**) ((mg_str*) ev_data)->buf;
     if(data->flag & 1) {
       auto sv = mg_str(data->message.c_str());
-      mg_ws_send(c, sv.buf, sv.len, WEBSOCKET_OP_TEXT);
+      if(sv.len)
+        mg_ws_send(c, sv.buf, sv.len, WEBSOCKET_OP_TEXT);
       if(data->flag & 2) {
         mg_ws_send(c, NULL, 0, WEBSOCKET_OP_CLOSE);
       }

@@ -99,19 +99,33 @@ void genNextRows(std::vector<uint64_t> &state, int depth, int ahead, auto fn) {
 }
 }
 
+std::string contributorID;
+time_t timeout;
+std::vector<std::thread> universes;
+bool stop_mgr = false;
+mg_connection* hostConnection;
+
 void fn(mg_connection* c, int ev, void* ev_data) {
   if (ev == MG_EV_ERROR) {
     std::cerr << "connection error: " << c->id << '\n';
   } else if (ev == MG_EV_WS_OPEN) {
-    mg_ws_send(c, "hello", 5, WEBSOCKET_OP_TEXT);
+    mg_ws_send(c, "hello", 5, WEBSOCKET_OP_TEXT); // replace with proper identifier
+    hostConnection = c;
   } else if (ev == MG_EV_WS_MSG) {
     mg_ws_message* wm = (mg_ws_message*)ev_data;
     printf("reply: %.*s\n", (int) wm->data.len, wm->data.buf);
+    if(mg_strcmp(wm->data, mg_str("bye"))) {
+      stop_mgr = true;
+    }
+  } else if (ev == MG_EV_POLL) {
+    if(time(0) > timeout) {
+      mg_ws_send(hostConnection, "disconnect", 5, WEBSOCKET_OP_TEXT);
+    }
   }
 
-  if (ev == MG_EV_ERROR || ev == MG_EV_CLOSE || ev == MG_EV_WS_MSG) {
-    *(bool *) (c->fn_data) = true;
-  }
+  // if (ev == MG_EV_ERROR || ev == MG_EV_CLOSE || ev == MG_EV_WS_MSG) {
+  //   stop_poll_loop = true;
+  // }
 }
 
 int main(int argc, char* argv[]) {
@@ -121,11 +135,13 @@ int main(int argc, char* argv[]) {
     return 1;
   }
   std::string host_endpoint = argv[1]; host_endpoint = "http://" + host_endpoint + "/worker-websocket";
+  contributorID = argv[1];
   mg_mgr mgr;
   bool done = false;
   mg_connection* c;
   mg_mgr_init(&mgr);
   c = mg_ws_connect(&mgr, host_endpoint.c_str(), fn, &done, NULL);
-  while (c && done == false) mg_mgr_poll(&mgr, 1000);
+  while (c && !stop_mgr)
+    mg_mgr_poll(&mgr, 1000);
   mg_mgr_free(&mgr);
 }
