@@ -2,6 +2,8 @@
 
 #include "mongoose.h"
 
+#include "logic.h"
+
 int p, width, sym, l4h;
 int maxwid, stator;
 
@@ -10,12 +12,14 @@ int depths[1000], total[1000];
 struct node { uint64_t row; int depth, shift, parent; char state; };
 node* tree = new node[16777216];
 int treeSize = 0, treeAlloc = 16777216;
-// std::vector<uint64_t> filters;
-// std::vector<uint64_t> leftborder[2];
+std::vector<uint64_t> filters;
+std::vector<uint64_t> leftborder[2];
 
 void dumpTree(std::string fn) {
   std::ofstream fx(fn);
-  fx<<p<<'.'<<width<<'.'<<sym<<'.'<<stator<<'.'<<"period.width.sym.stator"<<'\n';  
+  fx << p << ' ' << width << ' ' << sym << ' ' << stator << '\n';
+  fx << filters.size(); for(auto s:filters){fx << ' ' << s;} fx << '\n';
+  for(int t=0;t<2;t++){ fx<<leftborder[t].size(); for(auto s:leftborder[t]){fx<<' '<<s;}fx<<'\n';}
   fx<<treeSize<<'\n';
   for(int i=0;i<treeSize;i++)fx<<tree[i].row<<' '<<tree[i].shift<<' '<<tree[i].parent<<' '<<tree[i].state<<'\n';
   fx.flush(); fx.close();
@@ -24,12 +28,11 @@ void dumpTree(std::string fn) {
 void loadTree(std::string fn) {
   using namespace std;
   ifstream fx(fn);
-  string s; fx>>s; for(char&c:s) if(c=='.') c=' ';
-  istringstream gx(s); vector<string> keys; map<string, string> altkeys; 
-  string key; while(gx >> key) keys.push_back(key);
-  for(int i=0; i<keys.size()/2; i++) altkeys[keys[i+keys.size()/2]] = keys[i];
-  p = stoi(altkeys["period"]); width = stoi(altkeys["width"]); sym = stoi(altkeys["sym"]);
-  if(altkeys.count("stator")) stator = stoi(altkeys["stator"]);
+  fx>>p>>width>>sym>>stator;
+  int FS; fx>>FS; filters=std::vector<uint64_t>(FS);
+  for(int i=0;i<FS;i++)fx>>filters[i];
+  for(int pp=0;pp<2;pp++){fx>>FS;leftborder[pp]=std::vector<uint64_t>(FS);
+  for(int t=0;t<FS;t++)fx>>leftborder[pp][t];}
   fx>>treeSize;
   for(int i=0;i<treeSize;i++){
     fx>>tree[i].row>>tree[i].shift>>tree[i].parent>>tree[i].state;
@@ -154,8 +157,18 @@ static void fn(struct mg_connection* c, int ev, void* ev_data) {
     if(c->data[0] == 'W') {
       if(c->data[1] == '0') {
         // First message, initialization, should be of the form
-        // [contributor name]&&[ephemeral - 0/1]
-        c->data[1] = '1';
+        // [contributor name]&&[ephemeral - 0/1]&&[...]
+        struct mg_str caps[4];
+        int ephemeral;
+        if (mg_match(wm->data, mg_str("#&&#&&#"), caps) &&
+            mg_str_to_num(caps[1], 10, &ephemeral, sizeof(ephemeral)) &&
+            (0 <= ephemeral && ephemeral <= 1)) {
+          // establish connection
+          c->data[1] = '1';
+          // caps[0] holds `foo`, caps[1] holds `bar`.
+        } else {
+          // close connection
+        }
       }
     } else if(c->data[0] == 'A') {
       // mg_ws_send(c, wm->data.buf, wm->data.len, WEBSOCKET_OP_TEXT);
