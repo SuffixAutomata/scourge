@@ -101,6 +101,11 @@ void emit(int state, bool d = true){
 }
 
 
+std::string _mg_str_to_stdstring(mg_str x) {
+  return std::string(x.buf, x.buf + x.len);
+}
+
+
 struct handlerMessage {
   int flag = 0; // 1 - broadcast, 2 - halt all connections, 4 - connection closed,
   unsigned long conn_id;  // Parent connection ID
@@ -120,6 +125,7 @@ void adminConsoleHandler() {
   MG_INFO(("Admin console handler started running"));
   handlerMessage nx;
   while (adminConsoleHandler_queue.wait_dequeue(nx), nx.flag != 2) {
+    MG_INFO(("handling %d - %s", nx.conn_id, nx.message.c_str()));
     if(nx.flag == 1) {
       const std::lock_guard<std::mutex> lock(adminConnections_mutex);
       for(auto& [conn, mgr] : adminConnections){
@@ -129,9 +135,10 @@ void adminConsoleHandler() {
       continue;
     }
     if(nx.flag == 4) {
-      MG_INFO(("connection close triggered"));
+      MG_INFO(("\033[1;1;31m## connection close handler triggered ## \033[0m"));
       const std::lock_guard<std::mutex> lock(adminConnections_mutex);
       adminConnections.erase(adminConnections.find(nx.conn_id));
+      MG_INFO(("remaining conns: %llu", adminConnections.size()));
       continue;
     }
     // normal
@@ -143,9 +150,11 @@ void adminConsoleHandler() {
     if(nx.message == "load") {
       wakeupCall* resp = new wakeupCall {1, "Loading dump.txt"};
       mg_wakeup(mgr, nx.conn_id, &resp, sizeof(resp));
-    }
-    if(nx.message == "remoteclose") {
+    } else if(nx.message == "remoteclose") {
       wakeupCall* resp = new wakeupCall {3, "bye"};
+      mg_wakeup(mgr, nx.conn_id, &resp, sizeof(resp));
+    } else {
+      wakeupCall* resp = new wakeupCall {1, "huh?"};
       mg_wakeup(mgr, nx.conn_id, &resp, sizeof(resp));
     }
   }
@@ -199,11 +208,20 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
       mg_http_reply(c, 404, "Content-Type: text/raw\n", "what\n");
     }
   } else if(ev == MG_EV_OPEN) {
+    MG_INFO(("open triggered"));
+  } else if(ev == MG_EV_CLOSE) {
+    MG_INFO(("close triggered"));
   } else if(ev == MG_EV_WS_CTL) {
-    // handle connection closing
+    mg_ws_message* wm = (mg_ws_message*) ev_data;
+    uint32_t s = (wm->flags) & 0xF0;
+    MG_INFO(("\033[1;1;31mwebsocket control triggered, %.*s, %x \033[0m", wm->data.len, wm->data.buf, s));
+    // what's this?
+    if(s == 0x80) {
+      // adminConsoleHandler_queue.enqueue({4, c->id, NULL});
+    }
   } else if(ev == MG_EV_WS_MSG) {
     mg_ws_message* wm = (mg_ws_message*) ev_data;
-    if(c->data[0] == 'W') {
+    if(c->data[1] == 'W') {
       if(c->data[1] == '0') {
         // First message, initialization, should be of the form
         // [contributor name]&&[ephemeral - 0/1]&&[...]
@@ -219,9 +237,8 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
           // close connection
         }
       }
-    } else if(c->data[0] == 'A') {
-
-      // adminConsoleHandler_queue.enqueue()
+    } else if(c->data[1] == 'A') {
+      adminConsoleHandler_queue.enqueue({0, c->id, _mg_str_to_stdstring(wm->data)});
     }
   } else if (ev == MG_EV_WAKEUP) {
     // struct mg_str *data = (struct mg_str *) ev_data;
@@ -242,7 +259,7 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
 int main(void) {
   mg_mgr mgr;
   mg_mgr_init(&mgr);        // Initialise event manager
-  mg_log_set(MG_LL_DEBUG);  // Set debug log level
+  mg_log_set(MG_LL_INFO); 
   mg_http_listen(&mgr, "http://localhost:8000", fn, NULL);  // Create listener
   mg_wakeup_init(&mgr);  // Initialise wakeup socket pair
   for (;;) {             // Event loop
