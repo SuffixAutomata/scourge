@@ -158,7 +158,9 @@ void adminConsoleHandler() {
     if(nx.flag == 4) {
       // MG_INFO(("\033[1;1;31m## connection close handler triggered ## \033[0m"));
       const std::lock_guard<std::mutex> lock(adminConnections_mutex);
-      adminConnections.erase(adminConnections.find(nx.conn_id));
+      auto it =  adminConnections.find(nx.conn_id);
+      if(it != adminConnections.end())
+        adminConnections.erase(nx.conn_id);
       // MG_INFO(("remaining conns: %llu", adminConnections.size()));
       continue;
     }
@@ -206,8 +208,12 @@ bool workerHandler_running = false;
 void workerHandler() {
   assert(!workerHandler_running);
   workerHandler_running = true;
-  // MG_INFO(("Admin console handler started running"));
+  MG_INFO(("Worker handler started running"));
   workerhandlerMessage nx;
+  std::set<unsigned long> pingUnresponded;
+  auto postWorkerDisconnect = [&](unsigned long conn) {
+    // ...;
+  };
   while (workerHandler_queue.wait_dequeue(nx), nx.flag != 2) {
     MG_INFO(("handling %d - %s", nx.conn_id, nx.message.c_str()));
     if(nx.flag == 1) {
@@ -219,18 +225,27 @@ void workerHandler() {
     }
     if(nx.flag == 4) {
       // **ALL CLOSING WORKER CONNECTIONS, WHETHER BY FAILING A PING OR BY DISCONNECTING AND TRIGGERING WEBSOCKET CONTROL, SHALL PASS THROUGH THIS FUNCTION.**
-      MG_INFO(("\033[1;1;31m## worker connection close handler triggered ## \033[0m"));
+      MG_INFO(("\033[1;1;31m## worker connection %d close handler triggered ## \033[0m", nx.conn_id));
       const std::lock_guard<std::mutex> lock(workerConnections_mutex);
-      workerConnections.erase(workerConnections.find(nx.conn_id));
-      // release all work units...
+      auto it = workerConnections.find(nx.conn_id);
+      if(it != workerConnections.end()) {
+        workerConnections.erase(nx.conn_id);
+        postWorkerDisconnect(nx.conn_id);
+      } else {
+        MG_INFO(("tried to release already released worker %d", nx.conn_id));
+      }
       continue;
     }
     if(nx.flag == 8) {
-      const std::lock_guard<std::mutex> lock(workerConnections_mutex);
       // disconnect hosts that did not respond to last ping...
+      std::cerr << "disconnecting "<<pingUnresponded.size()<<" hosts\n";
+      for(auto conn : pingUnresponded)
+        workerHandler_queue.enqueue({4, conn, ""});
+      pingUnresponded.clear();
+      const std::lock_guard<std::mutex> lock(workerConnections_mutex);
       std::cerr << "pinging "<<workerConnections.size()<<" hosts\n";
       for(auto& [conn, mgr] : workerConnections)
-        woker(mgr, conn, {1, "ping"});
+        woker(mgr, conn, {1, "ping"}), pingUnresponded.insert(conn);
       continue;
     }
     // normal
@@ -239,38 +254,20 @@ void workerHandler() {
       const std::lock_guard<std::mutex> lock(workerConnections_mutex);
       mgr = workerConnections[nx.conn_id];
     }
-    // todo: initialize connection
-    // if(c->data[1] == '0') {
-    //   // First message, initialization, should be of the form
-    //   // [contributor name]&&[ephemeral - 0/1]&&[...]
-    //   struct mg_str caps[4];
-    //   int ephemeral;
-    //   if (mg_match(wm->data, mg_str("#&&#&&#"), caps) &&
-    //       mg_str_to_num(caps[1], 10, &ephemeral, sizeof(ephemeral)) &&
-    //       (0 <= ephemeral && ephemeral <= 1)) {
-    //     // establish connection
-    //     c->data[1] = '1';
-    //     // caps[0] holds `foo`, caps[1] holds `bar`.
-    //   } else {
-    //     // close connection
-    //   }
-    // }
+    // rewrite. initialization is not needed.
     std::stringstream s(nx.message);
     std::string com; s>>com;
-    // if(com == "disconnect") {
-    //   wakeupCall* resp = new wakeupCall {3, "bye"};
-    //   mg_wakeup(mgr, nx.conn_id, &resp, sizeof(resp));
-    //   // release all workunits...
-    // } else 
-    {
-      wakeupCall* resp = new wakeupCall {1, "hey hii!"};
-      mg_wakeup(mgr, nx.conn_id, &resp, sizeof(resp));
+    if(com == "pong") {
+      auto it = pingUnresponded.find(nx.conn_id);
+      if(it != pingUnresponded.end())
+        pingUnresponded.erase(nx.conn_id);
     }
   }
   // halt all connections
   {
     const std::lock_guard<std::mutex> lock(workerConnections_mutex);
-    // ...
+    for(auto & [conn, mgr] : workerConnections)
+      postWorkerDisconnect(conn);
     workerConnections.clear();
   }
   workerHandler_running = false;
@@ -310,11 +307,18 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
       if(workerHandler_running == false) {
         std::thread t(workerHandler); t.detach();
       }
-    }
+    } else if(mg_match(hm->uri, mg_str("/getconfig"), NULL)) {
+      // GET
+      // report  p, width, sym, l4h, maxwid, stator, filters, leftborder
+      // v2: merge with /getwork
+    } 
     else if(mg_match(hm->uri, mg_str("/getwork"), NULL)) {
       // load from dynamic work queue...
+      // POST request, should contain two parameters: ephemerality & amount
+      // returns amount * [workunit identifier]
     } else if(mg_match(hm->uri, mg_str("/returnwork"), NULL)) {
       // handle abandoning mechanism, etc...
+      // POST request, should contain 
     } 
     /* ?? */
     else {

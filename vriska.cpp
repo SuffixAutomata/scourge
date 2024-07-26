@@ -118,10 +118,14 @@ void fn(mg_connection* c, int ev, void* ev_data) {
   if (ev == MG_EV_ERROR) {
     std::cerr << "connection error: " << c->id << '\n';
   } else if (ev == MG_EV_WS_OPEN) {
-    mg_ws_send(c, "hello", 5, WEBSOCKET_OP_TEXT); // replace with proper identifier
+    // mg_ws_send(c, "hello", 5, WEBSOCKET_OP_TEXT); // replace with proper identifier
+    // don't need to initialize now
     hostConnection = c;
   } else if (ev == MG_EV_WS_MSG) {
     mg_ws_message* wm = (mg_ws_message*)ev_data;
+    if(mg_match(wm->data, mg_str("ping"), NULL)) {
+      mg_ws_send(c, "pong", 4, WEBSOCKET_OP_TEXT);
+    }
     printf("reply: %.*s\n", (int) wm->data.len, wm->data.buf);
   } else if (ev == MG_EV_WS_CTL) {
     mg_ws_message* wm = (mg_ws_message*) ev_data;
