@@ -114,12 +114,14 @@ void fn(mg_connection* c, int ev, void* ev_data) {
   } else if (ev == MG_EV_WS_MSG) {
     mg_ws_message* wm = (mg_ws_message*)ev_data;
     printf("reply: %.*s\n", (int) wm->data.len, wm->data.buf);
-    if(mg_strcmp(wm->data, mg_str("bye"))) {
+    if(mg_match(wm->data, mg_str("bye"), NULL)) {
       stop_mgr = true;
     }
   } else if (ev == MG_EV_POLL) {
     if(time(0) > timeout) {
-      mg_ws_send(hostConnection, "disconnect", 5, WEBSOCKET_OP_TEXT);
+      timeout = time(0) + 10;
+      std::cerr << "disconnecting\n";
+      mg_ws_send(hostConnection, "disconnect", 10, WEBSOCKET_OP_TEXT);
     }
   }
 
@@ -138,10 +140,12 @@ int main(int argc, char* argv[]) {
   contributorID = argv[1];
   mg_mgr mgr;
   bool done = false;
+  timeout = time(0) + std::stoi(argv[3]);
   mg_connection* c;
   mg_mgr_init(&mgr);
   c = mg_ws_connect(&mgr, host_endpoint.c_str(), fn, &done, NULL);
-  while (c && !stop_mgr)
+  while (c && !stop_mgr) {
     mg_mgr_poll(&mgr, 1000);
+  }
   mg_mgr_free(&mgr);
 }

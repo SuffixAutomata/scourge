@@ -234,6 +234,22 @@ void workerHandler() {
       const std::lock_guard<std::mutex> lock(workerConnections_mutex);
       mgr = workerConnections[nx.conn_id];
     }
+    // todo: initialize connection
+    // if(c->data[1] == '0') {
+    //   // First message, initialization, should be of the form
+    //   // [contributor name]&&[ephemeral - 0/1]&&[...]
+    //   struct mg_str caps[4];
+    //   int ephemeral;
+    //   if (mg_match(wm->data, mg_str("#&&#&&#"), caps) &&
+    //       mg_str_to_num(caps[1], 10, &ephemeral, sizeof(ephemeral)) &&
+    //       (0 <= ephemeral && ephemeral <= 1)) {
+    //     // establish connection
+    //     c->data[1] = '1';
+    //     // caps[0] holds `foo`, caps[1] holds `bar`.
+    //   } else {
+    //     // close connection
+    //   }
+    // }
     std::stringstream s(nx.message);
     std::string com; s>>com;
     if(com == "disconnect") {
@@ -241,7 +257,7 @@ void workerHandler() {
       mg_wakeup(mgr, nx.conn_id, &resp, sizeof(resp));
       // release all workunits...
     } else {
-      wakeupCall* resp = new wakeupCall {1, "huh?"};
+      wakeupCall* resp = new wakeupCall {1, "hey hii!"};
       mg_wakeup(mgr, nx.conn_id, &resp, sizeof(resp));
     }
   }
@@ -281,6 +297,13 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
       mg_ws_upgrade(c, hm, NULL);
       c->data[0] = 'W'; // websocket
       c->data[1] = 'W'; // worker
+      {
+        const std::lock_guard<std::mutex> lock(workerConnections_mutex);
+        workerConnections[c->id] = c->mgr;
+      }
+      if(workerHandler_running == false) {
+        std::thread t(workerHandler); t.detach();
+      }
     }
     else if(mg_match(hm->uri, mg_str("/getwork"), NULL)) {
       // load from dynamic work queue...
@@ -307,23 +330,7 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
   } else if(ev == MG_EV_WS_MSG) {
     mg_ws_message* wm = (mg_ws_message*) ev_data;
     if(c->data[1] == 'W') {
-      auto sv = mg_str("hey hi!!");
-      mg_ws_send(c, sv.buf, sv.len, WEBSOCKET_OP_TEXT);
-      // if(c->data[1] == '0') {
-      //   // First message, initialization, should be of the form
-      //   // [contributor name]&&[ephemeral - 0/1]&&[...]
-      //   struct mg_str caps[4];
-      //   int ephemeral;
-      //   if (mg_match(wm->data, mg_str("#&&#&&#"), caps) &&
-      //       mg_str_to_num(caps[1], 10, &ephemeral, sizeof(ephemeral)) &&
-      //       (0 <= ephemeral && ephemeral <= 1)) {
-      //     // establish connection
-      //     c->data[1] = '1';
-      //     // caps[0] holds `foo`, caps[1] holds `bar`.
-      //   } else {
-      //     // close connection
-      //   }
-      // }
+      workerHandler_queue.enqueue({0, c->id, _mg_str_to_stdstring(wm->data)});
     } else if(c->data[1] == 'A') {
       adminConsoleHandler_queue.enqueue({0, c->id, _mg_str_to_stdstring(wm->data)});
     }
