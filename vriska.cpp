@@ -123,14 +123,19 @@ void fn(mg_connection* c, int ev, void* ev_data) {
   } else if (ev == MG_EV_WS_MSG) {
     mg_ws_message* wm = (mg_ws_message*)ev_data;
     printf("reply: %.*s\n", (int) wm->data.len, wm->data.buf);
-    if(mg_match(wm->data, mg_str("bye"), NULL)) {
+  } else if (ev == MG_EV_WS_CTL) {
+    mg_ws_message* wm = (mg_ws_message*) ev_data;
+    uint32_t s = (wm->flags) & 0xF0;
+    // MG_INFO(("\033[1;1;31mwebsocket control triggered, %.*s, %x \033[0m", wm->data.len, wm->data.buf, s));
+    if(s == 0x80) {
       stop_mgr = true;
     }
   } else if (ev == MG_EV_POLL) {
     if(mg_millis() > timeout) {
       timeout = mg_millis() + 10 * 1000;
       std::cerr << "disconnecting\n";
-      mg_ws_send(hostConnection, "disconnect", 10, WEBSOCKET_OP_TEXT);
+      mg_ws_send(hostConnection, NULL, 0, WEBSOCKET_OP_CLOSE);
+      // stop_mgr = true;
     }
   } else if (ev == MG_EV_WAKEUP) {
     // struct mg_str *data = (struct mg_str *) ev_data;
@@ -149,36 +154,36 @@ void fn(mg_connection* c, int ev, void* ev_data) {
   }
 
   // ripped from https://github.com/cesanta/mongoose/blob/master/tutorials/http/http-client/main.c
-  if (ev == MG_EV_OPEN) {
-    *(uint64_t *) c->data = mg_millis() + s_timeout_ms;
-  } else if (ev == MG_EV_POLL) {
-    if (mg_millis() > *(uint64_t *) c->data && (c->is_connecting || c->is_resolving)) {
-      mg_error(c, "Connect timeout");
-    }
-  } else if (ev == MG_EV_CONNECT) {
-    // Connected to server. Extract host name from URL
-    struct mg_str host = mg_url_host(s_url);
+  // if (ev == MG_EV_OPEN) {
+  //   *(uint64_t *) c->data = mg_millis() + s_timeout_ms;
+  // } else if (ev == MG_EV_POLL) {
+  //   if (mg_millis() > *(uint64_t *) c->data && (c->is_connecting || c->is_resolving)) { // will segfault we need to only do this for actual connections
+  //     mg_error(c, "Connect timeout");
+  //   }
+  // } else if (ev == MG_EV_CONNECT) {
+  //   // Connected to server. Extract host name from URL
+  //   struct mg_str host = mg_url_host(s_url);
 
-    // Send request
-    int content_length = strlen(s_post_data);
-    mg_printf(c,
-              "POST %s HTTP/1.0\r\n"
-              "Host: %.*s\r\n"
-              "Content-Type: octet-stream\r\n"
-              "Content-Length: %d\r\n"
-              "\r\n",
-              mg_url_uri(s_url), (int) host.len,
-              host.buf, content_length);
-    mg_send(c, s_post_data, content_length);
-  } else if (ev == MG_EV_HTTP_MSG) {
-    // Response is received. Print it
-    struct mg_http_message *hm = (struct mg_http_message *) ev_data;
-    printf("%.*s", (int) hm->message.len, hm->message.buf);
-    c->is_draining = 1;        // Tell mongoose to close this connection
-    *(bool *) c->fn_data = true;  // Tell event loop to stop
-  } else if (ev == MG_EV_ERROR) {
-    *(bool *) c->fn_data = true;  // Error, tell event loop to stop
-  }
+  //   // Send request
+  //   int content_length = strlen(s_post_data);
+  //   mg_printf(c,
+  //             "POST %s HTTP/1.0\r\n"
+  //             "Host: %.*s\r\n"
+  //             "Content-Type: octet-stream\r\n"
+  //             "Content-Length: %d\r\n"
+  //             "\r\n",
+  //             mg_url_uri(s_url), (int) host.len,
+  //             host.buf, content_length);
+  //   mg_send(c, s_post_data, content_length);
+  // } else if (ev == MG_EV_HTTP_MSG) {
+  //   // Response is received. Print it
+  //   struct mg_http_message *hm = (struct mg_http_message *) ev_data;
+  //   printf("%.*s", (int) hm->message.len, hm->message.buf);
+  //   c->is_draining = 1;        // Tell mongoose to close this connection
+  //   *(bool *) c->fn_data = true;  // Tell event loop to stop
+  // } else if (ev == MG_EV_ERROR) {
+  //   *(bool *) c->fn_data = true;  // Error, tell event loop to stop
+  // }
 }
 
 int main(int argc, char* argv[]) {

@@ -8,7 +8,9 @@ int p, width, sym, l4h;
 int maxwid, stator;
 
 namespace _searchtree {
+std::mutex searchtree_mutex;
 int depths[1000], total[1000];
+// state: u - unqueued & done, q - queued to be sent, 
 struct node { uint64_t row; int depth, shift, parent, contrib; char state; };
 node* tree = new node[16777216];
 int treeSize = 0, treeAlloc = 16777216;
@@ -17,6 +19,7 @@ std::vector<uint64_t> leftborder[2];
 std::vector<std::string> contributors; std::map<std::string, int> contributorIDs;
 
 void dumpTree(std::string fn) {
+  const std::lock_guard<std::mutex> lock(searchtree_mutex);
   std::ofstream fx(fn);
   fx << p << ' ' << width << ' ' << sym << ' ' << stator << '\n';
   fx << filters.size(); for(auto s:filters){fx << ' ' << s;} fx << '\n';
@@ -50,11 +53,12 @@ void loadTree(std::string fn) {
   }
 }
 
-void flushTree(node* dest = tree) { assert(0); }
+// void flushTree(node* dest = tree) { assert(0); }
 
 int newNode() {
-  if(treeSize == treeAlloc)
-    treeAlloc *= 2, flushTree(new node[treeAlloc]);
+  assert(treeSize < treeAlloc);
+  // if(treeSize == treeAlloc)
+  //   treeAlloc *= 2, flushTree(new node[treeAlloc]);
   // if((treeSize - time(0)) % 8192 == 0) flushTree();
   tree[treeSize] = {0,0,0,0,'0'};
   return treeSize++;
@@ -131,6 +135,12 @@ std::map<unsigned long, mg_mgr*> adminConnections;
 std::mutex adminConnections_mutex;
 moodycamel::BlockingConcurrentQueue<adminhandlerMessage> adminConsoleHandler_queue;
 bool adminConsoleHandler_running = false;
+void woker(mg_mgr* const& mgr, const unsigned long conn, const wakeupCall& s) {
+  wakeupCall* resp = new wakeupCall {s};
+  mg_wakeup(mgr, conn, &resp, sizeof(resp));
+}
+
+// note adminConsoleHandler can block thread during runs
 void adminConsoleHandler() {
   assert(!adminConsoleHandler_running);
   adminConsoleHandler_running = true;
@@ -141,10 +151,8 @@ void adminConsoleHandler() {
     if(nx.flag == 1) {
       const std::lock_guard<std::mutex> lock(adminConnections_mutex);
       std::cerr << "broadcasting to "<<adminConnections.size()<<" hosts\n";
-      for(auto& [conn, mgr] : adminConnections){
-        wakeupCall* resp = new wakeupCall {1, nx.message};
-        mg_wakeup(mgr, conn, &resp, sizeof(resp));
-      }
+      for(auto& [conn, mgr] : adminConnections)
+        woker(mgr, conn, {1, nx.message});
       continue;
     }
     if(nx.flag == 4) {
@@ -163,18 +171,16 @@ void adminConsoleHandler() {
     std::stringstream s(nx.message);
     std::string com; s>>com;
     if(com == "load") {
-      wakeupCall* resp = new wakeupCall {1, "Loading dump.txt"};
-      mg_wakeup(mgr, nx.conn_id, &resp, sizeof(resp));
+      woker(mgr, nx.conn_id, {1, "Loading dump.txt..."});
+      sleep(2);
+      woker(mgr, nx.conn_id, {1, "yee"});
     } else if(com == "bcast") {
-      wakeupCall* resp = new wakeupCall {1, "Broadcasting..."};
-      mg_wakeup(mgr, nx.conn_id, &resp, sizeof(resp));
+      woker(mgr, nx.conn_id, {1, "Broadcasting..."});
       adminConsoleHandler_queue.enqueue({1, 0, nx.message});
     } else if(nx.message == "remoteclose") {
-      wakeupCall* resp = new wakeupCall {3, "bye"};
-      mg_wakeup(mgr, nx.conn_id, &resp, sizeof(resp));
+      woker(mgr, nx.conn_id, {3, "bye"});
     } else {
-      wakeupCall* resp = new wakeupCall {1, "huh?"};
-      mg_wakeup(mgr, nx.conn_id, &resp, sizeof(resp));
+      woker(mgr, nx.conn_id, {1, "huh?"});
     }
   }
   // halt all connections
@@ -196,6 +202,7 @@ std::map<unsigned long, mg_mgr*> workerConnections;
 std::mutex workerConnections_mutex;
 moodycamel::BlockingConcurrentQueue<workerhandlerMessage> workerHandler_queue;
 bool workerHandler_running = false;
+// note workerHandler can **NOT** block thread during runs because it has to deal with TEN THOUSAND CONNECTIONS
 void workerHandler() {
   assert(!workerHandler_running);
   workerHandler_running = true;
@@ -206,26 +213,24 @@ void workerHandler() {
     if(nx.flag == 1) {
       const std::lock_guard<std::mutex> lock(workerConnections_mutex);
       std::cerr << "broadcasting to "<<workerConnections.size()<<" hosts\n";
-      for(auto& [conn, mgr] : workerConnections){
-        wakeupCall* resp = new wakeupCall {1, nx.message};
-        mg_wakeup(mgr, conn, &resp, sizeof(resp));
-      }
+      for(auto& [conn, mgr] : workerConnections)
+        woker(mgr, conn, {1, nx.message});
       continue;
     }
     if(nx.flag == 4) {
-      // MG_INFO(("\033[1;1;31m## connection close handler triggered ## \033[0m"));
+      // **ALL CLOSING WORKER CONNECTIONS, WHETHER BY FAILING A PING OR BY DISCONNECTING AND TRIGGERING WEBSOCKET CONTROL, SHALL PASS THROUGH THIS FUNCTION.**
+      MG_INFO(("\033[1;1;31m## worker connection close handler triggered ## \033[0m"));
       const std::lock_guard<std::mutex> lock(workerConnections_mutex);
       workerConnections.erase(workerConnections.find(nx.conn_id));
+      // release all work units...
       continue;
     }
     if(nx.flag == 8) {
       const std::lock_guard<std::mutex> lock(workerConnections_mutex);
       // disconnect hosts that did not respond to last ping...
       std::cerr << "pinging "<<workerConnections.size()<<" hosts\n";
-      for(auto& [conn, mgr] : workerConnections){
-        wakeupCall* resp = new wakeupCall {1, "ping"};
-        mg_wakeup(mgr, conn, &resp, sizeof(resp));
-      }
+      for(auto& [conn, mgr] : workerConnections)
+        woker(mgr, conn, {1, "ping"});
       continue;
     }
     // normal
@@ -252,11 +257,12 @@ void workerHandler() {
     // }
     std::stringstream s(nx.message);
     std::string com; s>>com;
-    if(com == "disconnect") {
-      wakeupCall* resp = new wakeupCall {3, "bye"};
-      mg_wakeup(mgr, nx.conn_id, &resp, sizeof(resp));
-      // release all workunits...
-    } else {
+    // if(com == "disconnect") {
+    //   wakeupCall* resp = new wakeupCall {3, "bye"};
+    //   mg_wakeup(mgr, nx.conn_id, &resp, sizeof(resp));
+    //   // release all workunits...
+    // } else 
+    {
       wakeupCall* resp = new wakeupCall {1, "hey hii!"};
       mg_wakeup(mgr, nx.conn_id, &resp, sizeof(resp));
     }
@@ -325,7 +331,10 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
     MG_INFO(("\033[1;1;31mwebsocket control triggered, %.*s, %x \033[0m", wm->data.len, wm->data.buf, s));
     // what's this?
     if(s == 0x80) {
-      adminConsoleHandler_queue.enqueue({4, c->id, ""});
+      if(c->data[1] == 'W')
+        workerHandler_queue.enqueue({4, c->id, ""});
+      else if(c->data[1] == 'A')
+        adminConsoleHandler_queue.enqueue({4, c->id, ""});
     }
   } else if(ev == MG_EV_WS_MSG) {
     mg_ws_message* wm = (mg_ws_message*) ev_data;
