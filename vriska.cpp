@@ -100,10 +100,19 @@ void genNextRows(std::vector<uint64_t> &state, int depth, int ahead, auto fn) {
 }
 
 std::string contributorID;
-time_t timeout;
+uint64_t timeout;
 std::vector<std::thread> universes;
 bool stop_mgr = false;
 mg_connection* hostConnection;
+
+const char *s_url = "http://info.cern.ch/";
+const char *s_post_data = NULL;
+const uint64_t s_timeout_ms = 1500;  // Connect timeout in milliseconds
+
+struct wakeupCall {
+  int flag = 0; // 0 - send getwork, 1 - send returnwork
+  std::string message;
+};
 
 void fn(mg_connection* c, int ev, void* ev_data) {
   if (ev == MG_EV_ERROR) {
@@ -118,16 +127,58 @@ void fn(mg_connection* c, int ev, void* ev_data) {
       stop_mgr = true;
     }
   } else if (ev == MG_EV_POLL) {
-    if(time(0) > timeout) {
-      timeout = time(0) + 10;
+    if(mg_millis() > timeout) {
+      timeout = mg_millis() + 10 * 1000;
       std::cerr << "disconnecting\n";
       mg_ws_send(hostConnection, "disconnect", 10, WEBSOCKET_OP_TEXT);
     }
+  } else if (ev == MG_EV_WAKEUP) {
+    // struct mg_str *data = (struct mg_str *) ev_data;
+    wakeupCall* data = * (wakeupCall**) ((mg_str*) ev_data)->buf;
+    if(data->flag & 1) {
+      auto sv = mg_str(data->message.c_str());
+      if(sv.len)
+        mg_ws_send(c, sv.buf, sv.len, WEBSOCKET_OP_TEXT);
+      if(data->flag & 2) {
+        mg_ws_send(c, NULL, 0, WEBSOCKET_OP_CLOSE);
+      }
+    } else {
+      mg_http_reply(c, 200, "", "Result: %s\n", data->message.c_str());
+    }
+    delete data;
   }
 
-  // if (ev == MG_EV_ERROR || ev == MG_EV_CLOSE || ev == MG_EV_WS_MSG) {
-  //   stop_poll_loop = true;
-  // }
+  // ripped from https://github.com/cesanta/mongoose/blob/master/tutorials/http/http-client/main.c
+  if (ev == MG_EV_OPEN) {
+    *(uint64_t *) c->data = mg_millis() + s_timeout_ms;
+  } else if (ev == MG_EV_POLL) {
+    if (mg_millis() > *(uint64_t *) c->data && (c->is_connecting || c->is_resolving)) {
+      mg_error(c, "Connect timeout");
+    }
+  } else if (ev == MG_EV_CONNECT) {
+    // Connected to server. Extract host name from URL
+    struct mg_str host = mg_url_host(s_url);
+
+    // Send request
+    int content_length = strlen(s_post_data);
+    mg_printf(c,
+              "POST %s HTTP/1.0\r\n"
+              "Host: %.*s\r\n"
+              "Content-Type: octet-stream\r\n"
+              "Content-Length: %d\r\n"
+              "\r\n",
+              mg_url_uri(s_url), (int) host.len,
+              host.buf, content_length);
+    mg_send(c, s_post_data, content_length);
+  } else if (ev == MG_EV_HTTP_MSG) {
+    // Response is received. Print it
+    struct mg_http_message *hm = (struct mg_http_message *) ev_data;
+    printf("%.*s", (int) hm->message.len, hm->message.buf);
+    c->is_draining = 1;        // Tell mongoose to close this connection
+    *(bool *) c->fn_data = true;  // Tell event loop to stop
+  } else if (ev == MG_EV_ERROR) {
+    *(bool *) c->fn_data = true;  // Error, tell event loop to stop
+  }
 }
 
 int main(int argc, char* argv[]) {
@@ -140,9 +191,10 @@ int main(int argc, char* argv[]) {
   contributorID = argv[1];
   mg_mgr mgr;
   bool done = false;
-  timeout = time(0) + std::stoi(argv[3]);
   mg_connection* c;
   mg_mgr_init(&mgr);
+  mg_wakeup_init(&mgr);  // Initialise wakeup socket pair
+  timeout = mg_millis() + std::stoi(argv[3]) * 1000ull;
   c = mg_ws_connect(&mgr, host_endpoint.c_str(), fn, &done, NULL);
   while (c && !stop_mgr) {
     mg_mgr_poll(&mgr, 1000);
