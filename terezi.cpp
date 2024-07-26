@@ -121,13 +121,10 @@ std::queue<int> pendingOutbound;
 struct pendingInboundMessage {
   int id;
   bool completed;
+  std::string contributor;
   std::vector<uint64_t> children;
 };
 moodycamel::BlockingConcurrentQueue<pendingInboundMessage> pendingInbound;
-
-void workunitHandler() {
-  // every T seconds clear out B2A and regenerate A2B node
-}
 
 std::string _mg_str_to_stdstring(mg_str x) {
   return std::string(x.buf, x.buf + x.len);
@@ -161,6 +158,19 @@ struct workerInfo {
 };
 std::map<unsigned long, workerInfo> workerConnections;
 std::mutex workerConnections_mutex;
+
+void workunitHandler() {
+  // every T seconds clear out B2A and regenerate A2B node
+  while(/* */) {
+    // process pendingInbound but process at most 1000 to ensure that pendingOutbound can be refreshed
+    // only acquire the lock for a shot amount of time
+    if(/* */) {
+      std::stringstream res;
+      /* output stats */
+      adminConsoleHandler_queue.enqueue({1, 0, res.str()});
+    }
+  }
+}
 
 // note adminConsoleHandler can block thread during runs
 void adminConsoleHandler() {
@@ -203,7 +213,7 @@ void adminConsoleHandler() {
       adminConsoleHandler_queue.enqueue({1, 0, nx.message});
     } else if(nx.message == "remoteclose") {
       woker(mgr, nx.conn_id, {3, "bye"});
-    } else if(nx.message == "stat-conns") {
+    } else if(nx.message == "conn-stats") {
       std::stringstream f;
       std::vector<uint64_t> latencies, uptimes;
       { const std::lock_guard<std::mutex> lock(workerConnections_mutex);
@@ -212,7 +222,8 @@ void adminConsoleHandler() {
       f << latencies.size() << " connections<br/>latencies:";
       for(auto i: latencies) f<<" "<<i<<"ms";
       f<< "<br/>uptimes:";
-      for(auto i: uptimes) f<<" "<<i<<"ms";
+      f<<std::setprecision(1);
+      for(auto i: uptimes) f<<" "<<i/60000.0<<"m";
       woker(mgr, nx.conn_id, {1, f.str()});
     } else {
       woker(mgr, nx.conn_id, {1, "huh?"});
@@ -244,7 +255,8 @@ void workerHandler() {
   workerhandlerMessage nx;
   std::set<unsigned long> pingUnresponded;
   auto postWorkerDisconnect = [&](unsigned long conn) {
-    // ...;
+    for(int i:workerConnections[conn].attachedWorkunits)
+      pendingInbound.enqueue({i, 0, "", {}});
   };
   uint64_t lastping = 0;
   while (workerHandler_queue.wait_dequeue(nx), nx.flag != 2) {
@@ -287,7 +299,9 @@ void workerHandler() {
       if(it != pingUnresponded.end())
         pingUnresponded.erase(it);
       { const std::lock_guard<std::mutex> lock(workerConnections_mutex); 
-        workerConnections[nx.conn_id].latency = nx.ms - lastping;
+        auto& m = workerConnections[nx.conn_id];
+        m.latency = nx.ms - lastping;
+        m.uptime = nx.ms - m.contime;
       }
     }
   }
@@ -327,7 +341,7 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
       c->data[0] = 'W'; // websocket
       c->data[1] = 'W'; // worker
       { const std::lock_guard<std::mutex> lock(workerConnections_mutex);
-        workerConnections[c->id] = {c->mgr, 0};
+        workerConnections[c->id] = {c->mgr, mg_millis(), 0, 0, {}};
       }
       if(workerHandler_running == false) {
         std::thread t(workerHandler); t.detach();
@@ -346,7 +360,6 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
       mg_http_reply(c, 200, "Content-Type: text/raw\n", "%s", res.str().c_str());
     } 
     else if(mg_match(hm->uri, mg_str("/getwork"), NULL)) {
-      // load from dynamic work queue...
       // POST request, should contain three parameters: websocket id & ephemerality & amount
       // returns amount * [workunit identifier]
       std::stringstream co(_mg_str_to_stdstring(hm->body));
@@ -354,16 +367,37 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
       bool ephemeral;
       co >> ephemeral;
       if(!ephemeral) {
-        // not yet implemented
+        // TODO. not yet implemented
         res << "0\n";
       } else {
-        const std::lock_guard<std::mutex> lock(workerConnections_mutex);
+        const std::lock_guard<std::mutex> lock(pendingOutbound_mutex);
         int amnt; co >> amnt;
-        // int cnt = std::min()
+        int cnt = std::min(amnt, (int)pendingOutbound.size());
+        res << cnt<<'\n';
+        for(int i=0; i<cnt; i++) {
+          int onx = pendingOutbound.front(); pendingOutbound.pop();
+          res<<onx<<' '<<tree[onx].depth%p;
+          for(uint64_t x:getState(onx)) res<<' '<<x;
+          res << '\n';
+        }
+        mg_http_reply(c, 200, "Content-Type: text/raw\n", "%s", res.str().c_str());
       }
     } else if(mg_match(hm->uri, mg_str("/returnwork"), NULL)) {
-      // handle abandoning mechanism, etc...
-      // POST request, should contain 
+      // POST request, should contain workunit id, status - 0 or 1
+      // if status is 1, further contain contributor id and all children
+      std::stringstream co(_mg_str_to_stdstring(hm->body));
+      int id, status;
+      co >> id >> status;
+      if(status == 0)
+        pendingInbound.enqueue({id, 0, "", {}});
+      else {
+        std::string cid; co >> cid;
+        int ch; co >> ch;
+        std::vector<uint64_t> rows(ch);
+        for(int i=0; i<ch; i++) co >> rows[i];
+        pendingInbound.enqueue({id, 1, cid, rows});
+      }
+      mg_http_reply(c, 200, "Content-Type: text/raw\n", "OK");
     } 
     /* ?? */
     else {
