@@ -56,7 +56,7 @@ void trans(std::vector<int> vars, std::vector<int> &inst) {
 }
 
 bool Compl3t34bl3(const std::vector<uint64_t> &state, int depth, int phase) {
-  assert(p * 2 == state.size());
+  assert(p * 2 == sz(state));
   // auto idx = [&](int j) { return ((sym==1) ? min(j, width - j - 1) : j); };
   auto get = [&](int r, int j, int t) {
     if (t == p)

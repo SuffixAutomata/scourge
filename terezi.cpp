@@ -62,7 +62,7 @@ int newNode() {
   // if(treeSize == treeAlloc)
   //   treeAlloc *= 2, flushTree(new node[treeAlloc]);
   // if((treeSize - time(0)) % 8192 == 0) flushTree();
-  tree[treeSize] = {0,0,0,0,'0'};
+  tree[treeSize] = {0,0,0,0,0,'0'};
   return treeSize++;
 }
 
@@ -116,6 +116,18 @@ void emit(int state, bool d = true){
   cout << "x = 0, y = 0, rule = B3/S23\n" + rle + '!' << endl;
 }
 
+std::mutex pendingOutbound_mutex;
+std::queue<int> pendingOutbound;
+struct pendingInboundMessage {
+  int id;
+  bool completed;
+  std::vector<uint64_t> children;
+};
+moodycamel::BlockingConcurrentQueue<pendingInboundMessage> pendingInbound;
+
+void workunitHandler() {
+  // every T seconds clear out B2A and regenerate A2B node
+}
 
 std::string _mg_str_to_stdstring(mg_str x) {
   return std::string(x.buf, x.buf + x.len);
@@ -142,7 +154,12 @@ void woker(mg_mgr* const& mgr, const unsigned long conn, const wakeupCall& s) {
   mg_wakeup(mgr, conn, &resp, sizeof(resp));
 }
 
-std::map<unsigned long, std::pair<mg_mgr*, uint64_t>> workerConnections;
+struct workerInfo {
+  mg_mgr* mgr;
+  uint64_t contime, uptime, latency;
+  std::vector<int> attachedWorkunits;
+};
+std::map<unsigned long, workerInfo> workerConnections;
 std::mutex workerConnections_mutex;
 
 // note adminConsoleHandler can block thread during runs
@@ -188,12 +205,14 @@ void adminConsoleHandler() {
       woker(mgr, nx.conn_id, {3, "bye"});
     } else if(nx.message == "stat-conns") {
       std::stringstream f;
-      std::vector<uint64_t> latencies;
+      std::vector<uint64_t> latencies, uptimes;
       { const std::lock_guard<std::mutex> lock(workerConnections_mutex);
-        for(auto& [conn, m]:workerConnections) latencies.push_back(m.second);
+        for(auto& [conn, m]:workerConnections) latencies.push_back(m.latency), uptimes.push_back(m.uptime);
       }
       f << latencies.size() << " connections<br/>latencies:";
       for(auto i: latencies) f<<" "<<i<<"ms";
+      f<< "<br/>uptimes:";
+      for(auto i: uptimes) f<<" "<<i<<"ms";
       woker(mgr, nx.conn_id, {1, f.str()});
     } else {
       woker(mgr, nx.conn_id, {1, "huh?"});
@@ -208,10 +227,10 @@ void adminConsoleHandler() {
 }
 
 struct workerhandlerMessage {
-  int flag = 0; // 4 - connection closed, 8 - ping time
+  int flag = 0; // 4 - connection closed, 8 - ping time, 16 - attach workunit
   unsigned long conn_id;  // Parent connection ID
   std::string message;
-  uint64_t ms;
+  uint64_t ms = 0;
 };
 
 moodycamel::BlockingConcurrentQueue<workerhandlerMessage> workerHandler_queue;
@@ -236,11 +255,11 @@ void workerHandler() {
       const std::lock_guard<std::mutex> lock(workerConnections_mutex);
       auto it = workerConnections.find(nx.conn_id);
       if(it != workerConnections.end()) {
+        postWorkerDisconnect(nx.conn_id);
         workerConnections.erase(it);
         auto it2 = pingUnresponded.find(nx.conn_id);
         if(it2 != pingUnresponded.end())
           pingUnresponded.erase(it2);
-        postWorkerDisconnect(nx.conn_id);
       } else
         MG_INFO(("tried to release already released worker %d", nx.conn_id));
       continue;
@@ -252,21 +271,24 @@ void workerHandler() {
       pingUnresponded.clear();
       const std::lock_guard<std::mutex> lock(workerConnections_mutex);
       for(auto& [conn, m] : workerConnections)
-        woker(m.first, conn, {1, "ping"}), pingUnresponded.insert(conn);
+        woker(m.mgr, conn, {1, "ping"}), pingUnresponded.insert(conn);
       lastping = nx.ms;
       continue;
     }
-    // normal
-    mg_mgr* mgr;
-    
-    // rewrite. initialization is not needed.
+    if(nx.flag == 16) {
+      const std::lock_guard<std::mutex> lock(workerConnections_mutex);
+      workerConnections[nx.conn_id].attachedWorkunits.push_back(nx.ms); // todo less naughtily reuse this
+      continue;
+    }
     std::stringstream s(nx.message);
     std::string com; s>>com;
     if(com == "pong") {
       auto it = pingUnresponded.find(nx.conn_id);
       if(it != pingUnresponded.end())
         pingUnresponded.erase(it);
-      { const std::lock_guard<std::mutex> lock(workerConnections_mutex); workerConnections[nx.conn_id].second = nx.ms - lastping; }
+      { const std::lock_guard<std::mutex> lock(workerConnections_mutex); 
+        workerConnections[nx.conn_id].latency = nx.ms - lastping;
+      }
     }
   }
   // halt all connections
@@ -286,7 +308,7 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
     if(mg_match(hm->uri, mg_str("/"), NULL)) {
       mg_http_reply(c, 200, "Content-Type: text/raw\n", "welcome\n");
     } else if(mg_match(hm->uri, mg_str("/admin"), NULL)) {
-      mg_http_serve_opts opts = {.mime_types = "html=text/html"};
+      mg_http_serve_opts opts = {.root_dir=".", .ssi_pattern=NULL, .extra_headers=NULL, .mime_types="html=text/html", .page404=NULL, .fs=NULL};
       mg_http_serve_file(c, hm, "admin.html", &opts);
     } else if(mg_match(hm->uri, mg_str("/admin-websocket"), NULL)) {
       mg_ws_upgrade(c, hm, NULL);
@@ -312,13 +334,33 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
       }
     } else if(mg_match(hm->uri, mg_str("/getconfig"), NULL)) {
       // GET
-      // report  p, width, sym, l4h, maxwid, stator, filters, leftborder
       // v2: merge with /getwork
+      std::stringstream res;
+      res << p << ' ' << width << ' ' << sym << ' ' << l4h << ' ' << maxwid << ' ' << stator << ' ';
+      res << filters.size(); for(auto i:filters) res << ' ' << i;
+      for(int s=0;s<2; s++){
+        res<<' '<<leftborder[s].size();
+        for(auto i:leftborder[s]) res<<' '<<i;
+      }
+      res<<'\n';
+      mg_http_reply(c, 200, "Content-Type: text/raw\n", "%s", res.str().c_str());
     } 
     else if(mg_match(hm->uri, mg_str("/getwork"), NULL)) {
       // load from dynamic work queue...
-      // POST request, should contain two parameters: ephemerality & amount
+      // POST request, should contain three parameters: websocket id & ephemerality & amount
       // returns amount * [workunit identifier]
+      std::stringstream co(_mg_str_to_stdstring(hm->body));
+      std::stringstream res;
+      bool ephemeral;
+      co >> ephemeral;
+      if(!ephemeral) {
+        // not yet implemented
+        res << "0\n";
+      } else {
+        const std::lock_guard<std::mutex> lock(workerConnections_mutex);
+        int amnt; co >> amnt;
+        // int cnt = std::min()
+      }
     } else if(mg_match(hm->uri, mg_str("/returnwork"), NULL)) {
       // handle abandoning mechanism, etc...
       // POST request, should contain 
