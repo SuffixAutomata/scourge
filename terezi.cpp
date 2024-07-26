@@ -4,6 +4,8 @@
 
 #include "cqueue/bcq.h"
 
+int worker_ping_duration = 3000; // ms
+
 int p, width, sym, l4h;
 int maxwid, stator;
 
@@ -140,6 +142,9 @@ void woker(mg_mgr* const& mgr, const unsigned long conn, const wakeupCall& s) {
   mg_wakeup(mgr, conn, &resp, sizeof(resp));
 }
 
+std::map<unsigned long, std::pair<mg_mgr*, uint64_t>> workerConnections;
+std::mutex workerConnections_mutex;
+
 // note adminConsoleHandler can block thread during runs
 void adminConsoleHandler() {
   assert(!adminConsoleHandler_running);
@@ -160,7 +165,7 @@ void adminConsoleHandler() {
       const std::lock_guard<std::mutex> lock(adminConnections_mutex);
       auto it =  adminConnections.find(nx.conn_id);
       if(it != adminConnections.end())
-        adminConnections.erase(nx.conn_id);
+        adminConnections.erase(it);
       // MG_INFO(("remaining conns: %llu", adminConnections.size()));
       continue;
     }
@@ -181,13 +186,21 @@ void adminConsoleHandler() {
       adminConsoleHandler_queue.enqueue({1, 0, nx.message});
     } else if(nx.message == "remoteclose") {
       woker(mgr, nx.conn_id, {3, "bye"});
+    } else if(nx.message == "stat-conns") {
+      std::stringstream f;
+      std::vector<uint64_t> latencies;
+      { const std::lock_guard<std::mutex> lock(workerConnections_mutex);
+        for(auto& [conn, m]:workerConnections) latencies.push_back(m.second);
+      }
+      f << latencies.size() << " connections<br/>latencies:";
+      for(auto i: latencies) f<<" "<<i<<"ms";
+      woker(mgr, nx.conn_id, {1, f.str()});
     } else {
       woker(mgr, nx.conn_id, {1, "huh?"});
     }
   }
   // halt all connections
-  {
-    const std::lock_guard<std::mutex> lock(adminConnections_mutex);
+  { const std::lock_guard<std::mutex> lock(adminConnections_mutex);
     // hmm does this trigger nx flag 4 ...?
     adminConnections.clear();
   }
@@ -195,16 +208,16 @@ void adminConsoleHandler() {
 }
 
 struct workerhandlerMessage {
-  int flag = 0; // 1 - broadcast, 2 - halt all connections, 4 - connection closed, 8 - ping time
+  int flag = 0; // 4 - connection closed, 8 - ping time
   unsigned long conn_id;  // Parent connection ID
   std::string message;
+  uint64_t ms;
 };
 
-std::map<unsigned long, mg_mgr*> workerConnections;
-std::mutex workerConnections_mutex;
 moodycamel::BlockingConcurrentQueue<workerhandlerMessage> workerHandler_queue;
 bool workerHandler_running = false;
 // note workerHandler can **NOT** block thread during runs because it has to deal with TEN THOUSAND CONNECTIONS
+// role of worker handler is just to ping
 void workerHandler() {
   assert(!workerHandler_running);
   workerHandler_running = true;
@@ -214,58 +227,50 @@ void workerHandler() {
   auto postWorkerDisconnect = [&](unsigned long conn) {
     // ...;
   };
+  uint64_t lastping = 0;
   while (workerHandler_queue.wait_dequeue(nx), nx.flag != 2) {
-    MG_INFO(("handling %d - %s", nx.conn_id, nx.message.c_str()));
-    if(nx.flag == 1) {
-      const std::lock_guard<std::mutex> lock(workerConnections_mutex);
-      std::cerr << "broadcasting to "<<workerConnections.size()<<" hosts\n";
-      for(auto& [conn, mgr] : workerConnections)
-        woker(mgr, conn, {1, nx.message});
-      continue;
-    }
+    // MG_INFO(("handling %d - %s", nx.conn_id, nx.message.c_str()));
     if(nx.flag == 4) {
       // **ALL CLOSING WORKER CONNECTIONS, WHETHER BY FAILING A PING OR BY DISCONNECTING AND TRIGGERING WEBSOCKET CONTROL, SHALL PASS THROUGH THIS FUNCTION.**
       MG_INFO(("\033[1;1;31m## worker connection %d close handler triggered ## \033[0m", nx.conn_id));
       const std::lock_guard<std::mutex> lock(workerConnections_mutex);
       auto it = workerConnections.find(nx.conn_id);
       if(it != workerConnections.end()) {
-        workerConnections.erase(nx.conn_id);
+        workerConnections.erase(it);
+        auto it2 = pingUnresponded.find(nx.conn_id);
+        if(it2 != pingUnresponded.end())
+          pingUnresponded.erase(it2);
         postWorkerDisconnect(nx.conn_id);
-      } else {
+      } else
         MG_INFO(("tried to release already released worker %d", nx.conn_id));
-      }
       continue;
     }
     if(nx.flag == 8) {
       // disconnect hosts that did not respond to last ping...
-      std::cerr << "disconnecting "<<pingUnresponded.size()<<" hosts\n";
       for(auto conn : pingUnresponded)
         workerHandler_queue.enqueue({4, conn, ""});
       pingUnresponded.clear();
       const std::lock_guard<std::mutex> lock(workerConnections_mutex);
-      std::cerr << "pinging "<<workerConnections.size()<<" hosts\n";
-      for(auto& [conn, mgr] : workerConnections)
-        woker(mgr, conn, {1, "ping"}), pingUnresponded.insert(conn);
+      for(auto& [conn, m] : workerConnections)
+        woker(m.first, conn, {1, "ping"}), pingUnresponded.insert(conn);
+      lastping = nx.ms;
       continue;
     }
     // normal
     mg_mgr* mgr;
-    {
-      const std::lock_guard<std::mutex> lock(workerConnections_mutex);
-      mgr = workerConnections[nx.conn_id];
-    }
+    
     // rewrite. initialization is not needed.
     std::stringstream s(nx.message);
     std::string com; s>>com;
     if(com == "pong") {
       auto it = pingUnresponded.find(nx.conn_id);
       if(it != pingUnresponded.end())
-        pingUnresponded.erase(nx.conn_id);
+        pingUnresponded.erase(it);
+      { const std::lock_guard<std::mutex> lock(workerConnections_mutex); workerConnections[nx.conn_id].second = nx.ms - lastping; }
     }
   }
   // halt all connections
-  {
-    const std::lock_guard<std::mutex> lock(workerConnections_mutex);
+  { const std::lock_guard<std::mutex> lock(workerConnections_mutex);
     for(auto & [conn, mgr] : workerConnections)
       postWorkerDisconnect(conn);
     workerConnections.clear();
@@ -287,8 +292,7 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
       mg_ws_upgrade(c, hm, NULL);
       c->data[0] = 'W'; // websocket
       c->data[1] = 'A'; // admin
-      {
-        const std::lock_guard<std::mutex> lock(adminConnections_mutex);
+      { const std::lock_guard<std::mutex> lock(adminConnections_mutex);
         adminConnections[c->id] = c->mgr;
       }
       if(adminConsoleHandler_running == false) {
@@ -300,9 +304,8 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
       mg_ws_upgrade(c, hm, NULL);
       c->data[0] = 'W'; // websocket
       c->data[1] = 'W'; // worker
-      {
-        const std::lock_guard<std::mutex> lock(workerConnections_mutex);
-        workerConnections[c->id] = c->mgr;
+      { const std::lock_guard<std::mutex> lock(workerConnections_mutex);
+        workerConnections[c->id] = {c->mgr, 0};
       }
       if(workerHandler_running == false) {
         std::thread t(workerHandler); t.detach();
@@ -333,7 +336,6 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
     mg_ws_message* wm = (mg_ws_message*) ev_data;
     uint32_t s = (wm->flags) & 0xF0;
     MG_INFO(("\033[1;1;31mwebsocket control triggered, %.*s, %x \033[0m", wm->data.len, wm->data.buf, s));
-    // what's this?
     if(s == 0x80) {
       if(c->data[1] == 'W')
         workerHandler_queue.enqueue({4, c->id, ""});
@@ -343,7 +345,7 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
   } else if(ev == MG_EV_WS_MSG) {
     mg_ws_message* wm = (mg_ws_message*) ev_data;
     if(c->data[1] == 'W') {
-      workerHandler_queue.enqueue({0, c->id, _mg_str_to_stdstring(wm->data)});
+      workerHandler_queue.enqueue({0, c->id, _mg_str_to_stdstring(wm->data), mg_millis()});
     } else if(c->data[1] == 'A') {
       adminConsoleHandler_queue.enqueue({0, c->id, _mg_str_to_stdstring(wm->data)});
     }
@@ -361,6 +363,13 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
       mg_http_reply(c, 200, "", "Result: %s\n", data->message.c_str());
     }
     delete data;
+  } else if (ev == MG_EV_POLL) {
+    static uint64_t lastping = 0, current = 0;
+    if((current = mg_millis()) > lastping + worker_ping_duration) {
+      lastping = current;
+      if(workerHandler_running)
+        workerHandler_queue.enqueue({8, 0, "", lastping});
+    }
   }
 }
 

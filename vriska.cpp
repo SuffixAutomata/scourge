@@ -124,9 +124,10 @@ void fn(mg_connection* c, int ev, void* ev_data) {
   } else if (ev == MG_EV_WS_MSG) {
     mg_ws_message* wm = (mg_ws_message*)ev_data;
     if(mg_match(wm->data, mg_str("ping"), NULL)) {
+      // std::cerr << "received ping\n";
       mg_ws_send(c, "pong", 4, WEBSOCKET_OP_TEXT);
     }
-    printf("reply: %.*s\n", (int) wm->data.len, wm->data.buf);
+    // printf("reply: %.*s\n", (int) wm->data.len, wm->data.buf);
   } else if (ev == MG_EV_WS_CTL) {
     mg_ws_message* wm = (mg_ws_message*) ev_data;
     uint32_t s = (wm->flags) & 0xF0;
