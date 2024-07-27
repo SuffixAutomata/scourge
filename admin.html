@@ -21,7 +21,7 @@
     };
     enable(false);
     var appendToLog = function(msg) { 
-      log.innerHTML += msg + '<br/>'; 
+      log.innerHTML += msg + '<br/>';
       log.scrollTop = log.scrollHeight;
     };
     window.onload = function() {
@@ -40,6 +40,8 @@
       else {
         ws.send(message.value);
         appendToLog('SENT: ' + message.value);
+        var v = document.getElementById("initformouter");
+        if(v) v.remove();
       }
       message.value = "";
     }
@@ -49,5 +51,29 @@
         send.click();
       }
     });
+
+    function handleInitForm(action) {
+      // Disable all form elements
+      // const formElements = document.querySelectorAll('input, textarea, button');
+      // formElements.forEach(element => element.disabled = true);
+
+      // Simulate form submission or autofill action
+      if (action === 'submit') {
+          // alert('Form submitted!');
+          // Here you would typically send the form data to a server
+      } else if (action === 'autofill') {
+          // alert('Autofill triggered!');
+          document.getElementById("autofilltextarea").style.width = "40%";
+          document.getElementById("autofilltextarea").style.display = "";
+          document.getElementById("initform").style.width = "55%";
+          // Here you would typically populate the form fields with default or fetched data
+      }
+    }
+
+    function toggleAdditionalOptions() {
+      const additionalOptions = document.getElementById('additionalOptions');
+      additionalOptions.style.display = document.querySelector('input[name="additionalOptions"]:checked').value === 'yes' ? 'block' : 'none';
+      // document.getElementById("autofilltextarea").style.height = "100%";
+    }
   </script>
 </html>

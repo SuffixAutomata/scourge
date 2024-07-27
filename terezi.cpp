@@ -240,7 +240,12 @@ void adminConsoleHandler() {
       f<<std::setprecision(1);
       for(auto i: uptimes) f<<" "<<i/60000.0<<"m";
       woker(mgr, nx.conn_id, {1, f.str()});
-    } else {
+    } else if(nx.message == "init") {
+      std::ifstream _f("initform.html");
+      std::stringstream f; f << _f.rdbuf();
+      woker(mgr, nx.conn_id, {1, f.str()});
+    }
+    else {
       woker(mgr, nx.conn_id, {1, "huh?"});
     }
   }

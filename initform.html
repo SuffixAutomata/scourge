@@ -1,0 +1,44 @@
+<div id="initformouter" style="display: flex; ">
+  <form onsubmit="handleInitForm('submit'); return false;" id="initform" style="width:100%">
+    <input type="number" id="period" name="period" placeholder="period" required>
+    
+    <input type="number" id="width" name="width" placeholder="width" required>
+    
+    <input type="number" id="symmetry" name="symmetry" placeholder="symmetry, 0 or 1" required>
+    
+    <input type="number" id="lookahead" name="lookahead" placeholder="lookahead rows" required> <br>
+    
+    <textarea id="initialrows" placeholder="initial rows" rows="8" required></textarea><br>
+    
+    <label>Additional Options:</label>
+    <input type="radio" id="additionalOptionsYes" name="additionalOptions" value="yes" onclick="toggleAdditionalOptions()" required>
+    <label for="additionalOptionsYes">Yes</label>
+    <input type="radio" id="additionalOptionsNo" name="additionalOptions" value="no" onclick="toggleAdditionalOptions()" required>
+    <label for="additionalOptionsNo">No</label><br><br>
+    
+    <div id="additionalOptions" style="display:none;">
+      <label for="filters">Filters:</label>
+      <input type="number" id="filters" name="filters"><br><br>
+    
+      <label for="filterrows">Filter Rows:</label>
+      <textarea id="filterrows" name="filterrows" rows="4"></textarea><br><br>
+    
+      <label for="column0cnt">Column0-cnt:</label>
+      <input type="number" id="column0cnt" name="column0cnt"><br><br>
+    
+      <label for="column0">Column0:</label>
+      <input type="text" id="column0" name="column0"><br><br>
+    
+      <label for="column1cnt">Column1-cnt:</label>
+      <input type="number" id="column1cnt" name="column1cnt"><br><br>
+    
+      <label for="column1">Column1:</label>
+      <input type="text" id="column1" name="column1"><br><br>
+    </div>
+    
+    <button type="button" onclick="handleInitForm('submit')">Submit</button>
+    <button type="button" onclick="handleInitForm('autofill')">Autofill</button>
+  </form>
+  <textarea id="autofilltextarea" placeholder="autofill input" style="box-sizing: border-box; display:none; width:0%; height:100%;"></textarea>
+</div>
+

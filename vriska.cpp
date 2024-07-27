@@ -154,8 +154,24 @@ void computationManager(mg_mgr* const& mgr, const unsigned long conn) {
   wakeupCall r;
   response.wait_dequeue(r);
   std::cerr << "response: " << r.message << '\n';
+  std::stringstream ix(r.message);
+  /* res << p << ' ' << width << ' ' << sym << ' ' << l4h << ' ' << maxwid << ' ' << stator << ' ';
+      res << filters.size(); for(auto i:filters) res << ' ' << i;
+      for(int s=0;s<2; s++){
+        res<<' '<<leftborder[s].size();
+        for(auto i:leftborder[s]) res<<' '<<i;
+      }
+      res<<'\n';*/
+  ix >> p >> width >> sym >> l4h >> maxwid >> stator;
+  int FS; ix>>FS; filters = std::vector<uint64_t>(FS);
+  for(int i=0;i<FS;i++)ix>>filters[i];
+  for(int s=0;s<2;s++){ix>>FS;leftborder[s]=std::vector<uint64_t>(FS);
+  for(int i=0;i<FS;i++)ix>>leftborder[s][i];}
+  
   // fetch threads+1 workunits
   woker(mgr, conn, {1, std::to_string(cid)+" 0 "+std::to_string(threads+1)});
+  response.wait_dequeue(r);
+  std::cerr << "response: " << r.message << '\n';
   woker(mgr, conn, {1, std::to_string(cid)+" 0 1"});
 
 }
