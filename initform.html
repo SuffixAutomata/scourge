@@ -1,4 +1,4 @@
-<div id="initformouter" style="display: flex; ">
+<div id="initformouter" style="display: flex; width:60%">
   <form onsubmit="handleInitForm('submit'); return false;" id="initform" style="width:100%">
     <input type="number" id="period" name="period" placeholder="period" required>
     
@@ -8,37 +8,29 @@
     
     <input type="number" id="lookahead" name="lookahead" placeholder="lookahead rows" required> <br>
     
-    <textarea id="initialrows" placeholder="initial rows" rows="8" required></textarea><br>
+    <textarea id="initialrows" placeholder="initial rows" rows="16" style="width:90%" required></textarea><br>
     
     <label>Additional Options:</label>
     <input type="radio" id="additionalOptionsYes" name="additionalOptions" value="yes" onclick="toggleAdditionalOptions()" required>
     <label for="additionalOptionsYes">Yes</label>
     <input type="radio" id="additionalOptionsNo" name="additionalOptions" value="no" onclick="toggleAdditionalOptions()" required>
-    <label for="additionalOptionsNo">No</label><br><br>
+    <label for="additionalOptionsNo">No</label><br>
     
     <div id="additionalOptions" style="display:none;">
-      <label for="filters">Filters:</label>
-      <input type="number" id="filters" name="filters"><br><br>
+      <input type="number" id="filters" name="filters" placeholder="filters"><br>
     
-      <label for="filterrows">Filter Rows:</label>
-      <textarea id="filterrows" name="filterrows" rows="4"></textarea><br><br>
+      <textarea id="filterrows" name="filterrows" placeholder="filter rows" rows="6" style="width:90%"></textarea><br>
+    <div style="display:flex; width:95%"><input type="number" id="column0cnt" name="column0cnt" placeholder="column -1 cnt">
+      <input type="text" id="column0" name="column0" placeholder="column -1 forced rows" style="flex-grow: 1"></div>
     
-      <label for="column0cnt">Column0-cnt:</label>
-      <input type="number" id="column0cnt" name="column0cnt"><br><br>
-    
-      <label for="column0">Column0:</label>
-      <input type="text" id="column0" name="column0"><br><br>
-    
-      <label for="column1cnt">Column1-cnt:</label>
-      <input type="number" id="column1cnt" name="column1cnt"><br><br>
-    
-      <label for="column1">Column1:</label>
-      <input type="text" id="column1" name="column1"><br><br>
+      <div style="display:flex;  width:95%"><input type="number" id="column1cnt" name="column1cnt" placeholder="column -2 cnt"> 
+        <input type="text" id="column1" name="column1" placeholder="column -2 forced rows" style="flex-grow: 1"></div><br> 
+
     </div>
     
     <button type="button" onclick="handleInitForm('submit')">Submit</button>
     <button type="button" onclick="handleInitForm('autofill')">Autofill</button>
   </form>
-  <textarea id="autofilltextarea" placeholder="autofill input" style="box-sizing: border-box; display:none; width:0%; height:100%;"></textarea>
+  <textarea id="autofilltextarea" rows="28" placeholder="autofill input" style="display:none; height:100%;" onchange="updateAutofill()"></textarea>
 </div>
 

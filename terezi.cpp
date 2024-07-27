@@ -162,7 +162,8 @@ void workunitHandler() {
   // every T seconds clear out B2A and regenerate A2B node
   pendingInboundMessage nx;
   int idx = 0, maxcnt = 1000;
-  while(0/* */) {
+  while(1) {
+    std::this_thread::sleep_for(1 * std::chrono::seconds(1));
     // process pendingInbound but process at most 1000 to ensure that pendingOutbound can be refreshed
     // only acquire the lock for a shot amount of time
     std::vector<int> addPendingOutbound;
@@ -226,9 +227,9 @@ void adminConsoleHandler() {
     } else if(com == "bcast") {
       woker(mgr, nx.conn_id, {1, "Broadcasting..."});
       adminConsoleHandler_queue.enqueue({1, 0, nx.message});
-    } else if(nx.message == "remoteclose") {
+    } else if(com == "remoteclose") {
       woker(mgr, nx.conn_id, {3, "bye"});
-    } else if(nx.message == "conn-stats") {
+    } else if(com == "conn-stats") {
       std::stringstream f;
       std::vector<uint64_t> latencies, uptimes;
       { const std::lock_guard<std::mutex> lock(workerConnections_mutex);
@@ -240,12 +241,73 @@ void adminConsoleHandler() {
       f<<std::setprecision(1);
       for(auto i: uptimes) f<<" "<<i/60000.0<<"m";
       woker(mgr, nx.conn_id, {1, f.str()});
-    } else if(nx.message == "init") {
+    } else if(com == "init") {
       std::ifstream _f("initform.html");
       std::stringstream f; f << _f.rdbuf();
       woker(mgr, nx.conn_id, {1, f.str()});
-    }
-    else {
+    } else if(com == "actual-init") {
+      const std::lock_guard<std::mutex> lock(searchtree_mutex);
+      std::string options;
+      if(treeSize != 0) {
+        woker(mgr, nx.conn_id, {1, "failed, tree is already initialized"});
+        goto fail;
+      }
+      // TODO: assumes stator = 0
+      s >> p >> width >> sym >> l4h;
+      if(sym != 0 && sym != 1) {
+        woker(mgr, nx.conn_id, {1, "failed, unsupported symmetry"});
+        continue;
+      }
+      for (int i = 0; i < 2 * p; i++) {
+        uint64_t x = 0; std::string row;
+        s >> row;
+        if(row.size() != width)  {
+          woker(mgr, nx.conn_id, {1, "failed, bad row length"});
+          goto fail;
+        }
+        for (int j = 0; j < width; j++)
+          if (row[j] == 'o')
+            x |= (1ull << j);
+// struct node { uint64_t row; int depth, shift, parent, contrib; char state; };
+        tree[newNode()]={x, i+1, 0, i-1, 0, 'd'};
+      } s>>options;
+      if (options[0] == 'y' || options[0] == 'Y') {
+        int filterrows; s>>filterrows;
+        for (int i = 0; i < filterrows; i++) {
+          uint64_t x = 0; std::string filter; s >> filter;
+          if(filter.size() != width) {
+            woker(mgr, nx.conn_id, {1, "failed, bad filter length, must be w"});
+            goto fail;
+          }
+          for (int j = 0; j < width; j++)
+            if (filter[j] == 'o')
+              x |= (1ull << j);
+          filters.push_back(x);
+        }
+        for(int idx=0; idx<2; idx++){
+          int cnt; s>>cnt;
+          leftborder[idx] = std::vector<uint64_t>(cnt);
+          for(int i=0; i<cnt; i++){
+            std::string t; s>>t;
+            if(t.size() != p)  {
+              woker(mgr, nx.conn_id, {1, "failed, bad fix length, must be p"});
+              goto fail;
+            }
+            for(int j=0; j<p; j++) if(t[j] == 'o') leftborder[idx][i] |= (1ull << j);
+          }
+        }
+      }
+      woker(mgr, nx.conn_id, {1, "successfully parsed input:\n<pre><code>" + nx.message.substr(12)+"</code></pre>"});
+      fail:;
+    } else if (nx.message=="loadsave") {
+      const std::lock_guard<std::mutex> lock(searchtree_mutex);
+      std::string fn; s>>fn;
+      loadTree(fn);
+    } else if(nx.message == "dumpsave") {
+      const std::lock_guard<std::mutex> lock(searchtree_mutex);
+      std::string fn; s>>fn;
+      dumpTree(fn);
+    }else {
       woker(mgr, nx.conn_id, {1, "huh?"});
     }
   }
