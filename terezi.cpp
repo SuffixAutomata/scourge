@@ -21,7 +21,6 @@ std::vector<uint64_t> leftborder[2];
 std::vector<std::string> contributors; std::map<std::string, int> contributorIDs;
 
 void dumpTree(std::string fn) {
-  const std::lock_guard<std::mutex> lock(searchtree_mutex);
   std::ofstream fx(fn);
   fx << p << ' ' << width << ' ' << sym << ' ' << stator << '\n';
   fx << filters.size(); for(auto s:filters){fx << ' ' << s;} fx << '\n';
@@ -145,7 +144,7 @@ struct wakeupCall {
 std::map<unsigned long, mg_mgr*> adminConnections;
 std::mutex adminConnections_mutex;
 moodycamel::BlockingConcurrentQueue<adminhandlerMessage> adminConsoleHandler_queue;
-bool adminConsoleHandler_running = false;
+int adminConsoleHandler_running = 0;
 void woker(mg_mgr* const& mgr, const unsigned long conn, const wakeupCall& s) {
   wakeupCall* resp = new wakeupCall {s};
   mg_wakeup(mgr, conn, &resp, sizeof(resp));
@@ -161,10 +160,27 @@ std::mutex workerConnections_mutex;
 
 void workunitHandler() {
   // every T seconds clear out B2A and regenerate A2B node
+  pendingInboundMessage nx;
+  int idx = 0, maxcnt = 1000;
   while(/* */) {
     // process pendingInbound but process at most 1000 to ensure that pendingOutbound can be refreshed
     // only acquire the lock for a shot amount of time
-    if(/* */) {
+    std::vector<int> addPendingOutbound;
+    std::vector<pendingInboundMessage> to_process(1000);
+    to_process.resize(pendingInbound.try_dequeue_bulk(to_process.begin(), maxcnt));
+    { const std::lock_guard<std::mutex> lock(searchtree_mutex);
+      for(auto x:to_process) {
+        if(x.completed) {
+          // ...
+        } else
+          addPendingOutbound.push_back(x.id);
+      }
+    }
+    { const std::lock_guard<std::mutex> lock(pendingOutbound_mutex);
+      for(int i:addPendingOutbound)
+        pendingOutbound.push(i);
+    }
+    if((++idx) % 256 == 0) {
       std::stringstream res;
       /* output stats */
       adminConsoleHandler_queue.enqueue({1, 0, res.str()});
@@ -174,8 +190,7 @@ void workunitHandler() {
 
 // note adminConsoleHandler can block thread during runs
 void adminConsoleHandler() {
-  assert(!adminConsoleHandler_running);
-  adminConsoleHandler_running = true;
+  assert(adminConsoleHandler_running == 1);
   // MG_INFO(("Admin console handler started running"));
   adminhandlerMessage nx;
   while (adminConsoleHandler_queue.wait_dequeue(nx), nx.flag != 2) {
@@ -245,12 +260,11 @@ struct workerhandlerMessage {
 };
 
 moodycamel::BlockingConcurrentQueue<workerhandlerMessage> workerHandler_queue;
-bool workerHandler_running = false;
+int workerHandler_running = 0;
 // note workerHandler can **NOT** block thread during runs because it has to deal with TEN THOUSAND CONNECTIONS
 // role of worker handler is just to ping
 void workerHandler() {
-  assert(!workerHandler_running);
-  workerHandler_running = true;
+  assert(workerHandler_running == 1);
   MG_INFO(("Worker handler started running"));
   workerhandlerMessage nx;
   std::set<unsigned long> pingUnresponded;
@@ -331,7 +345,8 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
       { const std::lock_guard<std::mutex> lock(adminConnections_mutex);
         adminConnections[c->id] = c->mgr;
       }
-      if(adminConsoleHandler_running == false) {
+      if(adminConsoleHandler_running == 0) {
+        adminConsoleHandler_running++;
         std::thread t(adminConsoleHandler); t.detach();
       }
     }
@@ -343,7 +358,8 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
       { const std::lock_guard<std::mutex> lock(workerConnections_mutex);
         workerConnections[c->id] = {c->mgr, mg_millis(), 0, 0, {}};
       }
-      if(workerHandler_running == false) {
+      if(workerHandler_running == 0) {
+        workerHandler_running++;
         std::thread t(workerHandler); t.detach();
       }
     } else if(mg_match(hm->uri, mg_str("/getconfig"), NULL)) {
