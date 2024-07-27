@@ -162,7 +162,7 @@ void workunitHandler() {
   // every T seconds clear out B2A and regenerate A2B node
   pendingInboundMessage nx;
   int idx = 0, maxcnt = 1000;
-  while(/* */) {
+  while(0/* */) {
     // process pendingInbound but process at most 1000 to ensure that pendingOutbound can be refreshed
     // only acquire the lock for a shot amount of time
     std::vector<int> addPendingOutbound;
@@ -253,7 +253,7 @@ void adminConsoleHandler() {
 }
 
 struct workerhandlerMessage {
-  int flag = 0; // 4 - connection closed, 8 - ping time, 16 - attach workunit
+  int flag = 0; // 4 - connection closed, 8 - ping time
   unsigned long conn_id;  // Parent connection ID
   std::string message;
   uint64_t ms = 0;
@@ -299,11 +299,6 @@ void workerHandler() {
       for(auto& [conn, m] : workerConnections)
         woker(m.mgr, conn, {1, "ping"}), pingUnresponded.insert(conn);
       lastping = nx.ms;
-      continue;
-    }
-    if(nx.flag == 16) {
-      const std::lock_guard<std::mutex> lock(workerConnections_mutex);
-      workerConnections[nx.conn_id].attachedWorkunits.push_back(nx.ms); // todo less naughtily reuse this
       continue;
     }
     std::stringstream s(nx.message);
@@ -353,6 +348,7 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
     /* connected units end*/
     else if (mg_match(hm->uri, mg_str("/worker-websocket"), NULL)) {
       mg_ws_upgrade(c, hm, NULL);
+      // TODO send c->id to worker
       c->data[0] = 'W'; // websocket
       c->data[1] = 'W'; // worker
       { const std::lock_guard<std::mutex> lock(workerConnections_mutex);
@@ -380,6 +376,8 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
       // returns amount * [workunit identifier]
       std::stringstream co(_mg_str_to_stdstring(hm->body));
       std::stringstream res;
+      int wsid;
+      co >> wsid;
       bool ephemeral;
       co >> ephemeral;
       if(!ephemeral) {
@@ -387,11 +385,13 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
         res << "0\n";
       } else {
         const std::lock_guard<std::mutex> lock(pendingOutbound_mutex);
+        const std::lock_guard<std::mutex> lock2(workerConnections_mutex);
         int amnt; co >> amnt;
         int cnt = std::min(amnt, (int)pendingOutbound.size());
         res << cnt<<'\n';
         for(int i=0; i<cnt; i++) {
           int onx = pendingOutbound.front(); pendingOutbound.pop();
+          workerConnections[wsid].attachedWorkunits.push_back(onx);
           res<<onx<<' '<<tree[onx].depth%p;
           for(uint64_t x:getState(onx)) res<<' '<<x;
           res << '\n';
