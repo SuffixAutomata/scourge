@@ -102,7 +102,9 @@ void genNextRows(std::vector<uint64_t> &state, int depth, int ahead, auto fn) {
 std::string contributorID;
 uint64_t timeout;
 std::vector<std::thread> universes;
+int threads;
 bool stop_mgr = false;
+long long cid = -1;
 mg_connection* hostConnection;
 
 // std::string s_url = "https://";
@@ -124,14 +126,38 @@ void woker(mg_mgr* const& mgr, const unsigned long conn, const wakeupCall& s) {
 
 moodycamel::BlockingConcurrentQueue<wakeupCall> response;
 
+struct A2Bunit{int id, depth; std::vector<uint64_t> rows;};
+moodycamel::BlockingConcurrentQueue<A2Bunit> A2B;
+struct B2Aunit{int id; std::vector<uint64_t> nextrows;};
+moodycamel::BlockingConcurrentQueue<B2Aunit> B2A;
+
+void betaUniverse() {
+  A2Bunit nx;
+  while(1) {
+    A2B.wait_dequeue(nx);
+    std::vector<uint64_t> resp;
+    int dep = nx.depth;
+    genNextRows(nx.rows, dep%p, l4h, [&](uint64_t x){ 
+      resp.push_back(x);
+    });
+    B2A.enqueue({nx.id, resp});
+  }
+}
+
+
 void computationManager(mg_mgr* const& mgr, const unsigned long conn) {
-  // sleep(1);
+  // computationManager runs to end of main
+  sleep(1);
   std::cerr << "sending getinfo...\n";
   woker(mgr, conn, {0, ""});
   std::cerr << "waiting for response...\n";
   wakeupCall r;
   response.wait_dequeue(r);
   std::cerr << "response: " << r.message << '\n';
+  // fetch threads+1 workunits
+  woker(mgr, conn, {1, std::to_string(cid)+" 0 "+std::to_string(threads+1)});
+  woker(mgr, conn, {1, std::to_string(cid)+" 0 1"});
+
 }
 
 void handler_httpconn(mg_connection* c, int ev, void* ev_data) {
@@ -195,6 +221,9 @@ void fn(mg_connection* c, int ev, void* ev_data) {
     if(mg_match(wm->data, mg_str("ping"), NULL)) {
       // std::cerr << "received ping\n";
       mg_ws_send(c, "pong", 4, WEBSOCKET_OP_TEXT);
+    } else if(cid == -1) {
+      cid = std::stoll(_mg_str_to_stdstring(wm->data));
+      std::cerr << "received connection id: "<<cid<<'\n';
     }
     // printf("reply: %.*s\n", (int) wm->data.len, wm->data.buf);
   } else if (ev == MG_EV_WS_CTL) {
@@ -227,6 +256,7 @@ int main(int argc, char* argv[]) {
   s_url += argv[1];
   std::string host_endpoint = s_url + "/worker-websocket";
   contributorID = argv[2];
+  threads = std::stoi(argv[3]);
   mg_mgr mgr;
   bool done = false;
   mg_connection* c;
@@ -238,4 +268,5 @@ int main(int argc, char* argv[]) {
     mg_mgr_poll(&mgr, 1000);
   }
   mg_mgr_free(&mgr);
+  return 0;
 }

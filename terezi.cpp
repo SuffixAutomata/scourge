@@ -12,7 +12,7 @@ int maxwid, stator;
 namespace _searchtree {
 std::mutex searchtree_mutex;
 int depths[1000], total[1000];
-// state: u - unqueued & done, q - queued to be sent, 
+// state: d - done, q - queued to be sent, s - sent
 struct node { uint64_t row; int depth, shift, parent, contrib; char state; };
 node* tree = new node[16777216];
 int treeSize = 0, treeAlloc = 16777216;
@@ -153,7 +153,7 @@ void woker(mg_mgr* const& mgr, const unsigned long conn, const wakeupCall& s) {
 struct workerInfo {
   mg_mgr* mgr;
   uint64_t contime, uptime, latency;
-  std::vector<int> attachedWorkunits;
+  std::set<int> attachedWorkunits;
 };
 std::map<unsigned long, workerInfo> workerConnections;
 std::mutex workerConnections_mutex;
@@ -170,7 +170,9 @@ void workunitHandler() {
     to_process.resize(pendingInbound.try_dequeue_bulk(to_process.begin(), maxcnt));
     { const std::lock_guard<std::mutex> lock(searchtree_mutex);
       for(auto x:to_process) {
+        if(tree[x.id].state == 'd') continue;
         if(x.completed) {
+          tree[x.id].state = 'd';
           // ...
         } else
           addPendingOutbound.push_back(x.id);
@@ -211,10 +213,8 @@ void adminConsoleHandler() {
       // MG_INFO(("remaining conns: %llu", adminConnections.size()));
       continue;
     }
-    // normal
     mg_mgr* mgr;
-    {
-      const std::lock_guard<std::mutex> lock(adminConnections_mutex);
+    { const std::lock_guard<std::mutex> lock(adminConnections_mutex);
       mgr = adminConnections[nx.conn_id];
     }
     std::stringstream s(nx.message);
@@ -356,9 +356,10 @@ void fn(mg_connection* c, int ev, void* ev_data) {
     /* connected units end*/
     else if (mg_match(hm->uri, mg_str("/worker-websocket"), NULL)) {
       mg_ws_upgrade(c, hm, NULL);
-      // TODO send c->id to worker
       c->data[0] = 'W'; // websocket
       c->data[1] = 'W'; // worker
+      auto sv = mg_str(std::to_string(c->id).c_str());
+      mg_ws_send(c, sv.buf, sv.len, WEBSOCKET_OP_TEXT);
       { const std::lock_guard<std::mutex> lock(workerConnections_mutex);
         workerConnections[c->id] = {c->mgr, mg_millis(), 0, 0, {}};
       }
@@ -394,24 +395,34 @@ void fn(mg_connection* c, int ev, void* ev_data) {
       } else {
         const std::lock_guard<std::mutex> lock(pendingOutbound_mutex);
         const std::lock_guard<std::mutex> lock2(workerConnections_mutex);
-        int amnt; co >> amnt;
-        int cnt = std::min(amnt, (int)pendingOutbound.size());
-        res << cnt<<'\n';
-        for(int i=0; i<cnt; i++) {
-          int onx = pendingOutbound.front(); pendingOutbound.pop();
-          workerConnections[wsid].attachedWorkunits.push_back(onx);
-          res<<onx<<' '<<tree[onx].depth%p;
-          for(uint64_t x:getState(onx)) res<<' '<<x;
-          res << '\n';
+        if(workerConnections.find(wsid) == workerConnections.end()) {
+          // ??? you already ended???
+          res << "0\n";
+        } else {
+          int amnt; co >> amnt;
+          int cnt = std::min(amnt, (int)pendingOutbound.size());
+          res << cnt<<'\n';
+          for(int i=0; i<cnt; i++) {
+            int onx = pendingOutbound.front(); pendingOutbound.pop();
+            workerConnections[wsid].attachedWorkunits.insert(onx);
+            res<<onx<<' '<<tree[onx].depth%p;
+            for(uint64_t x:getState(onx)) res<<' '<<x;
+            res << '\n';
+          }
         }
         mg_http_reply(c, 200, "Content-Type: text/raw\n", "%s", res.str().c_str());
       }
     } else if(mg_match(hm->uri, mg_str("/returnwork"), NULL)) {
-      // POST request, should contain workunit id, status - 0 or 1
+      // POST request, should contain websocket connection id, workunit id, status - 0 or 1
       // if status is 1, further contain contributor id and all children
       std::stringstream co(_mg_str_to_stdstring(hm->body));
-      int id, status;
-      co >> id >> status;
+      int wsid, id, status;
+      co >> wsid >> id >> status;
+      { const std::lock_guard<std::mutex> lock2(workerConnections_mutex);
+        if(workerConnections.find(wsid) != workerConnections.end())
+          if(workerConnections[wsid].attachedWorkunits.contains(id))
+            workerConnections[wsid].attachedWorkunits.erase(id);
+      }
       if(status == 0)
         pendingInbound.enqueue({id, 0, "", {}});
       else {
