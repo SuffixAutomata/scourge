@@ -105,6 +105,7 @@ std::vector<std::thread> universes;
 bool stop_mgr = false;
 mg_connection* hostConnection;
 
+// std::string s_url = "https://";
 std::string s_url = "http://";
 const uint64_t s_timeout_ms = 1500;  // Connect timeout in milliseconds
 
@@ -144,6 +145,10 @@ void handler_httpconn(mg_connection* c, int ev, void* ev_data) {
       response.enqueue({-1, ""});
     }
   } else if (ev == MG_EV_CONNECT) {
+    // struct mg_tls_opts opts = {.ca = mg_unpacked("/certs/ca.crt"),
+    //                            .cert = mg_unpacked("certs/client.crt"),
+    //                            .key = mg_unpacked("certs/client.key")};
+    // mg_tls_init(c, &opts);
     // Connected to server. Extract host name from URL
     std::cerr << "connected\n";
     std::string endpoint = s_url, method = "POST";
@@ -174,7 +179,12 @@ void handler_httpconn(mg_connection* c, int ev, void* ev_data) {
 void fn(mg_connection* c, int ev, void* ev_data) {
   if (ev == MG_EV_ERROR) {
     std::cerr << "connection error: " << c->id << '\n';
-  } else if (ev == MG_EV_WS_OPEN) {
+  } /*else if (ev == MG_EV_CONNECT) {
+    struct mg_tls_opts opts = {.ca = mg_unpacked("/certs/ca.crt"),
+                               .cert = mg_unpacked("certs/client.crt"),
+                               .key = mg_unpacked("certs/client.key")};
+    mg_tls_init(c, &opts);
+  } */else if (ev == MG_EV_WS_OPEN) {
     // mg_ws_send(c, "hello", 5, WEBSOCKET_OP_TEXT); // replace with proper identifier
     // don't need to initialize now
     assert(hostConnection == 0);

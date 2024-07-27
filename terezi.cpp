@@ -323,8 +323,16 @@ void workerHandler() {
   workerHandler_running = false;
 }
 
+mg_str ca_cert, server_cert, server_key;
+
 // HTTP request callback
-void fn(struct mg_connection* c, int ev, void* ev_data) {
+void fn(mg_connection* c, int ev, void* ev_data) {
+  // if (ev == MG_EV_ACCEPT) {
+  //   mg_tls_opts opts = {.ca = ca_cert,
+  //                       .cert = server_cert,
+  //                       .key = server_key};
+  //   mg_tls_init(c, &opts);
+  // } else 
   if (ev == MG_EV_HTTP_MSG) {
     mg_http_message* hm = (mg_http_message*) ev_data;
     /* admin end */
@@ -467,13 +475,18 @@ void fn(struct mg_connection* c, int ev, void* ev_data) {
 
 int main(void) {
   mg_mgr mgr;
+  // ca_cert = mg_file_read(&mg_fs_posix, "certs/ca.crt");
+  // server_cert = mg_file_read(&mg_fs_posix, "certs/server.crt");
+  // server_key = mg_file_read(&mg_fs_posix, "certs/server.key");
   mg_mgr_init(&mgr);        // Initialise event manager
   mg_log_set(MG_LL_INFO); 
+  // mg_http_listen(&mgr, "https://localhost:8000", fn, NULL);  // Create listener
   mg_http_listen(&mgr, "http://localhost:8000", fn, NULL);  // Create listener
   mg_wakeup_init(&mgr);  // Initialise wakeup socket pair
   for (;;) {             // Event loop
     mg_mgr_poll(&mgr, 1000);
   }
   mg_mgr_free(&mgr);
+  // free(ca_cert.buf), free(server_cert.buf), free(server_key.buf);
   return 0;
 }
