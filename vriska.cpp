@@ -41,14 +41,17 @@ void genNextRows(std::vector<uint64_t> &state, int depth, int ahead, auto fn) {
   auto get = [&](int r, int j, int t) {
     if (t == p)
       t = 0, j = (sym == 2) ? width - j - 1 : j;
+    // std::cerr << r << ' ' << j << ' ' << t << ' ';
     r = r * p + t - phase;
     int realRow = (r + depth - 2 * p) / p;
     if (j <= -1 && (realRow < (int)leftborder[-j-1].size())) {
       // WARN << j << ' ' << r << ' ' << t << '\n';
+      // std::cerr << "resolved to "<<((leftborder[-j-1][realRow] & (1ull << t)) ? 1 : 0)<<'\n';
       return (leftborder[-j-1][realRow] & (1ull << t)) ? 1 : 2;
     }
     if (t == -1)
       r = sz(state);
+    // std::cerr << "->"<<r<<'\n';
     if (j <= -1 || j >= width)
       return (2 - 0);
     if (r < sz(state))
@@ -87,6 +90,7 @@ void genNextRows(std::vector<uint64_t> &state, int depth, int ahead, auto fn) {
     crit = std::vector<int>(_crit.begin(), _crit.end());
   }
   std::vector<uint64_t> bb(state.begin() + 1, state.end());
+  // std::cerr << "solving\n";
   solve(inst, crit, [&](std::vector<int> sol) {
     uint64_t x = 0;
     for (int j = 0; j < width; j++)
@@ -135,11 +139,13 @@ void betaUniverse() {
   A2Bunit nx;
   while(1) {
     A2B.wait_dequeue(nx);
+    // std::cerr <<"hi...\n";
     std::vector<uint64_t> resp;
     int dep = nx.depth;
-    genNextRows(nx.rows, dep%p, l4h, [&](uint64_t x){ 
+    genNextRows(nx.rows, dep, l4h, [&](uint64_t x){ 
       resp.push_back(x);
     });
+    // std::cerr << "found "<<resp.size()<<" solutions\n";
     B2A.enqueue({nx.id, resp});
   }
 }
@@ -147,13 +153,11 @@ void betaUniverse() {
 
 void computationManager(mg_mgr* const& mgr, const unsigned long conn) {
   // computationManager runs to end of main
-  sleep(1);
-  std::cerr << "sending getinfo...\n";
+  // sleep(1);
+  std::this_thread::sleep_for(std::chrono::seconds(1));
   woker(mgr, conn, {0, ""});
-  std::cerr << "waiting for response...\n";
   wakeupCall r;
   response.wait_dequeue(r);
-  std::cerr << "response: " << r.message << '\n';
   std::stringstream ix(r.message);
   /* res << p << ' ' << width << ' ' << sym << ' ' << l4h << ' ' << maxwid << ' ' << stator << ' ';
       res << filters.size(); for(auto i:filters) res << ' ' << i;
@@ -167,11 +171,44 @@ void computationManager(mg_mgr* const& mgr, const unsigned long conn) {
   for(int i=0;i<FS;i++)ix>>filters[i];
   for(int s=0;s<2;s++){ix>>FS;leftborder[s]=std::vector<uint64_t>(FS);
   for(int i=0;i<FS;i++)ix>>leftborder[s][i];}
-  
+  for(int i=0;i<threads;i++) universes.emplace_back(betaUniverse);
+  int qsize=0, desired = threads+1;
+  auto handle = [&]() {
+    if(qsize == desired) return;
+    woker(mgr, conn, {1, std::to_string(cid)+" 1 "+std::to_string(desired - qsize)});
+    response.wait_dequeue(r);
+    std::stringstream x(r.message);
+    int cnt; x >> cnt;
+    for(int i=0; i<cnt; i++) {
+      int id, depth; x >> id >> depth;
+      std::vector<uint64_t> rows(2*p); for(auto& s:rows)x>>s;
+      A2B.enqueue({id, depth, rows});
+    }
+    qsize += cnt;
+    if(qsize != desired) {
+      std::this_thread::sleep_for(std::chrono::seconds(3));
+      B2A.enqueue({-1, {}});
+    }
+  };
+  handle();
+  B2Aunit nx;
+  while(1) {
+    B2A.wait_dequeue(nx);
+    if(nx.id == -1) {
+      B2A.try_dequeue(nx);
+    }
+    if(nx.id != -1) {
+      // std::cerr<<"oh hey\n";
+      qsize--;
+      std::stringstream x; x<<cid << ' ' << nx.id << " 1\n";
+      x<<contributorID<< ' ' << nx.nextrows.size(); for(auto t:nx.nextrows)x<<' '<<t;x<<'\n';
+      woker(mgr, conn, {2, x.str()});
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    handle();
+  }
   // fetch threads+1 workunits
-  woker(mgr, conn, {1, std::to_string(cid)+" 0 "+std::to_string(threads+1)});
-  response.wait_dequeue(r);
-  std::cerr << "response: " << r.message << '\n';
+  
   woker(mgr, conn, {1, std::to_string(cid)+" 0 1"});
 
 }
@@ -179,10 +216,10 @@ void computationManager(mg_mgr* const& mgr, const unsigned long conn) {
 void handler_httpconn(mg_connection* c, int ev, void* ev_data) {
   // ripped from https://github.com/cesanta/mongoose/blob/master/tutorials/http/http-client/main.c
   if (ev == MG_EV_OPEN) {
-    std::cerr << "connection opened\n";
-    *(uint64_t *) c->data = mg_millis() + s_timeout_ms;
+    // std::cerr << "connection opened\n";
+    *(uint64_t *) c->data = mg_millis();
   } else if (ev == MG_EV_POLL) {
-    if (mg_millis() > *(uint64_t *) c->data && (c->is_connecting || c->is_resolving)) {
+    if (mg_millis() - s_timeout_ms > *(uint64_t *) c->data && (c->is_connecting || c->is_resolving)) {
       mg_error(c, "Connect timeout");
       response.enqueue({-1, ""});
     }
@@ -192,12 +229,12 @@ void handler_httpconn(mg_connection* c, int ev, void* ev_data) {
     //                            .key = mg_unpacked("certs/client.key")};
     // mg_tls_init(c, &opts);
     // Connected to server. Extract host name from URL
-    std::cerr << "connected\n";
+    // std::cerr << "connected\n";
     std::string endpoint = s_url, method = "POST";
     wakeupCall* data = (wakeupCall*) c->fn_data;
     if(data->flag == 0) endpoint += "/getconfig", method = "GET";
     if(data->flag == 1) endpoint += "/getwork";
-    if(data->flag == 2) endpoint += "/sendwork";
+    if(data->flag == 2) endpoint += "/returnwork";
     mg_str host = mg_url_host(endpoint.c_str());
     // Send request
     int content_length = data->message.size();
@@ -213,6 +250,7 @@ void handler_httpconn(mg_connection* c, int ev, void* ev_data) {
     mg_http_message* hm = (mg_http_message*) ev_data;
     response.enqueue({0, _mg_str_to_stdstring(hm->body)});
     c->is_draining = 1;
+    std::cerr << "latency: " << mg_millis() - (*(uint64_t *) c->data) << " ms, repsonse: "<<_mg_str_to_stdstring(hm->body)<<'\n';
   } else if (ev == MG_EV_ERROR) {
     response.enqueue({-1, ""});
   }
@@ -260,6 +298,10 @@ void fn(mg_connection* c, int ev, void* ev_data) {
     // struct mg_str *data = (struct mg_str *) ev_data;
     wakeupCall* data = * (wakeupCall**) ((mg_str*) ev_data)->buf;
     mg_http_connect(c->mgr, s_url.c_str(), handler_httpconn, data);
+  } else if (ev == MG_EV_CLOSE) {
+    if(c == hostConnection) {
+      stop_mgr = true;
+    }
   }
 }
 
@@ -272,7 +314,7 @@ int main(int argc, char* argv[]) {
   s_url += argv[1];
   std::string host_endpoint = s_url + "/worker-websocket";
   contributorID = argv[2];
-  threads = std::stoi(argv[3]);
+  threads = std::stoi(argv[4]);
   mg_mgr mgr;
   bool done = false;
   mg_connection* c;

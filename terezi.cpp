@@ -4,15 +4,15 @@
 
 #include "cqueue/bcq.h"
 
-int worker_ping_duration = 3000; // ms
+int worker_ping_duration = 8000; // ms
 
 int p, width, sym, l4h;
 int maxwid, stator;
 
 namespace _searchtree {
 std::mutex searchtree_mutex;
-int depths[1000], total[1000];
-// state: d - done, q - queued to be sent, s - sent
+// state: d - done, q - not done
+// TODO: for non-ephemeral nodes, include state s - sent to NE node
 struct node { uint64_t row; int depth, shift, parent, contrib; char state; };
 node* tree = new node[16777216];
 int treeSize = 0, treeAlloc = 16777216;
@@ -22,7 +22,7 @@ std::vector<std::string> contributors; std::map<std::string, int> contributorIDs
 
 void dumpTree(std::string fn) {
   std::ofstream fx(fn);
-  fx << p << ' ' << width << ' ' << sym << ' ' << stator << '\n';
+  fx << p << ' ' << width << ' ' << sym << ' ' << stator << ' ' << l4h << '\n';
   fx << filters.size(); for(auto s:filters){fx << ' ' << s;} fx << '\n';
   for(int t=0;t<2;t++){ fx<<leftborder[t].size(); for(auto s:leftborder[t]){fx<<' '<<s;}fx<<'\n';}
   fx<<treeSize<<'\n';
@@ -36,7 +36,7 @@ void dumpTree(std::string fn) {
 void loadTree(std::string fn) {
   using namespace std;
   ifstream fx(fn);
-  fx>>p>>width>>sym>>stator;
+  fx>>p>>width>>sym>>stator>>l4h;
   int FS; fx>>FS; filters=std::vector<uint64_t>(FS);
   for(int i=0;i<FS;i++)fx>>filters[i];
   for(int pp=0;pp<2;pp++){fx>>FS;leftborder[pp]=std::vector<uint64_t>(FS);
@@ -62,6 +62,7 @@ int newNode() {
   //   treeAlloc *= 2, flushTree(new node[treeAlloc]);
   // if((treeSize - time(0)) % 8192 == 0) flushTree();
   tree[treeSize] = {0,0,0,0,0,'0'};
+  // std::cerr << "called newnode " << treeSize << '\n';
   return treeSize++;
 }
 
@@ -82,44 +83,26 @@ int getWidth(int i) {
 
 #include "logic.h"
 
-int bdep = 0;
-void emit(int state, bool d = true){
-  using namespace std;
-  vector<uint64_t> mat;
-  while(state != -1)
-    mat.push_back(tree[state].row), state = tree[state].parent;
-  reverse(mat.begin(), mat.end());
-  if(!d) {
-    if(((int)(mat.size())) <= bdep) return;
-    bdep = mat.size();
-  }else
-    cout<<"[[OSC1LL4TOR COMPL3T3!!!]]"<<endl;
-  std::string rle;
-  int cnt = 0, cur = 0;
-  auto f = [&](char x) {
-    if(x != cur) {
-      if(cnt >= 2) rle += to_string(cnt);
-      if(cnt >= 1) rle += (char)cur;
-      cnt = 0, cur = x;
-    }
-    cnt++;
-  };
-  for(int r=0; r*p<((int)(mat.size())); r++){
-    if(r) f('$');
-    for(int x=r*p; x<((int)(mat.size())) && x<(r+1)*p; x++){
-      for(int j=0;j<width;j++) f("bo"[!!(mat[x]&(1ull<<j))]);
-      f('b');f('b');f('b');
-    }
-  }
-  f('!'); 
-  cout << "x = 0, y = 0, rule = B3/S23\n" + rle + '!' << endl;
-}
+std::string banner = "Welcome to Scourge v2.1\n";
+std::string longgestPartial;
+std::string oscillatorComplete;
 
-std::mutex pendingOutbound_mutex;
-std::queue<int> pendingOutbound;
+// std::mutex pendingOutbound_mutex;
+// std::queue<int> pendingOutbound;
+// ints store these and lock the tree instead because all the nodes will be queued here
+// TODO: refactor into pendingoutbound containing only a portion of the unprocessed nodes, will make getwork unlocking
+struct pendingOutboundMessage {
+  int id, depth;
+  std::vector<uint64_t> rows;
+};
+pendingOutboundMessage genPOM(int onx) {
+  return pendingOutboundMessage{onx, tree[onx].depth, getState(onx)};
+};
+moodycamel::BlockingConcurrentQueue<pendingOutboundMessage> pendingOutbound;
+
 struct pendingInboundMessage {
-  int id;
-  bool completed;
+  int id; unsigned long cid;
+  char state; // u - uncomplete, c - complete, s - sent
   std::string contributor;
   std::vector<uint64_t> children;
 };
@@ -150,6 +133,48 @@ void woker(mg_mgr* const& mgr, const unsigned long conn, const wakeupCall& s) {
   mg_wakeup(mgr, conn, &resp, sizeof(resp));
 }
 
+void emit(int state, bool d = true){
+  static int bdep = 0;
+  std::stringstream fxx;
+  using namespace std;
+  vector<uint64_t> mat;
+  while(state != -1)
+    mat.push_back(tree[state].row), state = tree[state].parent;
+  reverse(mat.begin(), mat.end());
+  if(!d) {
+    if(((int)(mat.size())) <= bdep) return;
+    bdep = mat.size();
+  }else
+    fxx<<"<br>[[OSC1LL4TOR COMPL3T3!!!]]<br>"<<endl;
+  std::string rle;
+  int cnt = 0, cur = 0;
+  auto f = [&](char x) {
+    if(x != cur) {
+      if(cnt >= 2) rle += to_string(cnt);
+      if(cnt >= 1) rle += (char)cur;
+      cnt = 0, cur = x;
+    }
+    cnt++;
+  };
+  for(int r=0; r*p<((int)(mat.size())); r++){
+    if(r) f('$');
+    for(int x=r*p; x<((int)(mat.size())) && x<(r+1)*p; x++){
+      for(int j=0;j<width;j++) f("bo"[!!(mat[x]&(1ull<<j))]);
+      f('b');f('b');f('b');
+    }
+  }
+  f('!'); 
+  fxx << "<pre style='white-space: pre-wrap; word-break:break-all'><code>";
+  fxx << "x = 0, y = 0, rule = B3/S23\n" + rle + "!</code></pre>" << endl;
+  if(d) {
+    oscillatorComplete += fxx.str();
+    std::ofstream fx("osc-complete");
+    fx<<oscillatorComplete<<std::endl; fx.flush(); fx.close();
+  }
+  else longgestPartial = fxx.str();
+  adminConsoleHandler_queue.enqueue({1, 0, fxx.str()});
+}
+
 struct workerInfo {
   mg_mgr* mgr;
   uint64_t contime, uptime, latency;
@@ -160,36 +185,80 @@ std::mutex workerConnections_mutex;
 
 void workunitHandler() {
   // every T seconds clear out B2A and regenerate A2B node
+  std::string autosave1 = "autosave-odd.txt", autosave2 = "autosave-even.txt";
   pendingInboundMessage nx;
   int idx = 0, maxcnt = 1000;
   while(1) {
     std::this_thread::sleep_for(1 * std::chrono::seconds(1));
     // process pendingInbound but process at most 1000 to ensure that pendingOutbound can be refreshed
     // only acquire the lock for a shot amount of time
-    std::vector<int> addPendingOutbound;
+    std::vector<pendingOutboundMessage> addPendingOutbound;
     std::vector<pendingInboundMessage> to_process(1000);
     to_process.resize(pendingInbound.try_dequeue_bulk(to_process.begin(), maxcnt));
     { const std::lock_guard<std::mutex> lock(searchtree_mutex);
-      for(auto x:to_process) {
+      const std::lock_guard<std::mutex> lock2(workerConnections_mutex);
+      for(auto& x:to_process) {
+        // std::cerr << x.id << ' ' <<x.cid << ' ' <<x.state << ' ' <<x.children.size() << '\n';
+        // if(x.children.size() > 1000) {
+        //   std::cerr << "preposterous\n";
+        //   assert(0);
+        // }
         if(tree[x.id].state == 'd') continue;
-        if(x.completed) {
+        if(x.state == 'c') {
           tree[x.id].state = 'd';
-          // ...
-        } else
-          addPendingOutbound.push_back(x.id);
+          if(!contributorIDs.contains(x.contributor)) {
+            contributorIDs[x.contributor] = contributors.size();
+            contributors.push_back(x.contributor);
+          }
+          tree[x.id].contrib = contributorIDs[x.contributor];
+          for(uint64_t r:x.children) {
+            // std::cerr << "requested newNode with "<< to_process.size() << ' ' << x.id << ' ' << x.cid << ' ' <<r<<' ' <<x.children.size()<<std::endl;
+            int onx = newNode();
+            tree[onx] = {r, tree[x.id].depth+1, 0, x.id, 0, 'q'};
+            addPendingOutbound.push_back(genPOM(onx));
+            emit(onx, Compl3t34bl3(getState(onx), tree[onx].depth, tree[onx].depth%p));
+          }
+        } else if(x.state == 'u') {
+          addPendingOutbound.push_back(genPOM(x.id));
+        }
+        
+        if(x.state == 'c' || x.state == 'u') {
+          if(workerConnections.find(x.cid) != workerConnections.end())
+            if(workerConnections[x.cid].attachedWorkunits.contains(x.id))
+              workerConnections[x.cid].attachedWorkunits.erase(x.id);
+        } else {
+          // note that only workerhandler is allowed to delete from workerconnections
+          // so if we somehow sent to a deleted connection, recycle it immediately
+          if(workerConnections.find(x.cid) != workerConnections.end())
+            workerConnections[x.cid].attachedWorkunits.insert(x.id);
+          else addPendingOutbound.push_back(genPOM(x.id));
+        }
       }
     }
-    { const std::lock_guard<std::mutex> lock(pendingOutbound_mutex);
-      for(int i:addPendingOutbound)
-        pendingOutbound.push(i);
-    }
+    pendingOutbound.enqueue_bulk(addPendingOutbound.begin(), addPendingOutbound.size());
+    // { const std::lock_guard<std::mutex> lock(pendingOutbound_mutex);
+    //   for(int i:addPendingOutbound)
+    //     pendingOutbound.enqueue(i);
+    // }
     if((++idx) % 256 == 0) {
+      const std::lock_guard<std::mutex> lock(searchtree_mutex);
+      const std::lock_guard<std::mutex> lock2(workerConnections_mutex);
       std::stringstream res;
-      /* output stats */
+      auto now_tt = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+      res << std::put_time(std::gmtime(&now_tt), "%c %Z") << " conn#: " << workerConnections.size();
+      res << " q#: "<<pendingOutbound.size_approx() << " pending#: "<<pendingInbound.size_approx();
       adminConsoleHandler_queue.enqueue({1, 0, res.str()});
+      if(idx % 1024 == 0) {
+        dumpTree(autosave1);
+        swap(autosave1, autosave2);
+        std::stringstream res2; res2 << "autosaved to "<<autosave1;
+        adminConsoleHandler_queue.enqueue({1, 0, res.str()});
+      }
     }
   }
 }
+
+std::thread WUhandlerthread(workunitHandler);
 
 // note adminConsoleHandler can block thread during runs
 void adminConsoleHandler() {
@@ -200,7 +269,7 @@ void adminConsoleHandler() {
     MG_INFO(("handling %d - %s", nx.conn_id, nx.message.c_str()));
     if(nx.flag == 1) {
       const std::lock_guard<std::mutex> lock(adminConnections_mutex);
-      std::cerr << "broadcasting to "<<adminConnections.size()<<" hosts\n";
+      // std::cerr << "broadcasting to "<<adminConnections.size()<<" hosts\n";
       for(auto& [conn, mgr] : adminConnections)
         woker(mgr, conn, {1, nx.message});
       continue;
@@ -220,16 +289,11 @@ void adminConsoleHandler() {
     }
     std::stringstream s(nx.message);
     std::string com; s>>com;
-    if(com == "load") {
-      woker(mgr, nx.conn_id, {1, "Loading dump.txt..."});
-      sleep(2);
-      woker(mgr, nx.conn_id, {1, "yee"});
-    } else if(com == "bcast") {
-      woker(mgr, nx.conn_id, {1, "Broadcasting..."});
-      adminConsoleHandler_queue.enqueue({1, 0, nx.message});
+    if(com == "help") {
+      woker(mgr, nx.conn_id, {1, "commands: remoteclose connstats init loadsave dumpsave treestats"});
     } else if(com == "remoteclose") {
       woker(mgr, nx.conn_id, {3, "bye"});
-    } else if(com == "conn-stats") {
+    } else if(com == "connstats") {
       std::stringstream f;
       std::vector<uint64_t> latencies, uptimes;
       { const std::lock_guard<std::mutex> lock(workerConnections_mutex);
@@ -261,7 +325,7 @@ void adminConsoleHandler() {
       for (int i = 0; i < 2 * p; i++) {
         uint64_t x = 0; std::string row;
         s >> row;
-        if(row.size() != width)  {
+        if(sz(row) != width)  {
           woker(mgr, nx.conn_id, {1, "failed, bad row length"});
           goto fail;
         }
@@ -275,7 +339,7 @@ void adminConsoleHandler() {
         int filterrows; s>>filterrows;
         for (int i = 0; i < filterrows; i++) {
           uint64_t x = 0; std::string filter; s >> filter;
-          if(filter.size() != width) {
+          if(sz(filter) != width) {
             woker(mgr, nx.conn_id, {1, "failed, bad filter length, must be w"});
             goto fail;
           }
@@ -289,7 +353,7 @@ void adminConsoleHandler() {
           leftborder[idx] = std::vector<uint64_t>(cnt);
           for(int i=0; i<cnt; i++){
             std::string t; s>>t;
-            if(t.size() != p)  {
+            if(sz(t) != p)  {
               woker(mgr, nx.conn_id, {1, "failed, bad fix length, must be p"});
               goto fail;
             }
@@ -297,22 +361,81 @@ void adminConsoleHandler() {
           }
         }
       }
+      assert(treeSize == 2*p);
+      tree[2*p-1].state = 'q';
+      pendingOutbound.enqueue(genPOM(2*p-1));
+      if(s.fail()) {
+        treeSize = 0;
+        woker(mgr, nx.conn_id, {1, "unknown parsing failure"});
+        goto fail;
+      }
       woker(mgr, nx.conn_id, {1, "successfully parsed input:\n<pre><code>" + nx.message.substr(12)+"</code></pre>"});
       fail:;
-    } else if (nx.message=="loadsave") {
+    } else if (com == "loadsave") {
       const std::lock_guard<std::mutex> lock(searchtree_mutex);
-      std::string fn; s>>fn;
-      loadTree(fn);
-    } else if(nx.message == "dumpsave") {
+      if(treeSize != 0) {
+        woker(mgr, nx.conn_id, {1, "failed, tree is already initialized"});
+      } else {
+        std::string fn; s>>fn;
+        loadTree(fn);
+        int cnt = 0;
+        for(int i=0; i<treeSize; i++)
+          if(tree[i].state == 'q') {
+            cnt++;
+            pendingOutbound.enqueue(genPOM(i));
+          }
+        woker(mgr, nx.conn_id, {1, "loaded " + std::to_string(treeSize) + " nodes from "+fn+
+        " and queued "+std::to_string(cnt)+" nodes"});
+      }
+    } else if(com == "dumpsave") {
       const std::lock_guard<std::mutex> lock(searchtree_mutex);
       std::string fn; s>>fn;
       dumpTree(fn);
-    }else {
+      // TODO: NE node process here
+      woker(mgr, nx.conn_id, {1, "saved " + std::to_string(treeSize) + " nodes to "+fn});
+    } else if(com == "treestats") {
+      woker(mgr, nx.conn_id, {1, "crunching tree stats..."});
+      const std::lock_guard<std::mutex> lock(searchtree_mutex);
+      std::stringstream fx;
+      int maxdep = 0;
+      std::vector<std::pair<int, std::string>> conIdx;
+      for(auto s:contributors) conIdx.push_back({0, s});
+      std::cerr << treeSize << std::endl;
+      assert(treeSize <= 1000);
+      for(int i=0; i<treeSize; i++) {
+        maxdep = std::max(maxdep, tree[i].depth);
+        std::cerr << treeSize << std::endl;
+        assert(treeSize <= 1000);
+      }
+      std::vector<int> ongoing(maxdep+1), total(maxdep+1);
+      for(int i=0;i<treeSize; i++) {
+        std::cerr << i << ' ' << treeSize << std::endl;
+        assert(treeSize <= 1000);
+        total[tree[i].depth]++;
+        if(tree[i].state != 'd') ongoing[tree[i].depth]++;
+        else if(i>=2*p) conIdx[tree[i].contrib].first++;
+      }
+      fx << treeSize << "nodes<br>";
+      fx << "max depth "<<maxdep <<"<br>";
+      fx << "profile";
+      for(int i=0; i<=maxdep; i++){
+        if(ongoing[i])fx<<' '<<ongoing[i]<<'/'<<total[i];
+        else fx<<' '<<total[i];
+      }
+      fx<<"<br>contributors<br>";
+      std::sort(conIdx.begin(), conIdx.end()); std::reverse(conIdx.begin(), conIdx.end());
+      for(auto& [cnt, id]:conIdx)fx<<id<<": "<<cnt<<" nodes<br>";
+      fx<<longgestPartial;
+      if(oscillatorComplete.size())fx<<oscillatorComplete;
+      woker(mgr, nx.conn_id, {1, fx.str()});
+    }
+    else {
       woker(mgr, nx.conn_id, {1, "huh?"});
     }
   }
   // halt all connections
   { const std::lock_guard<std::mutex> lock(adminConnections_mutex);
+    // TODO. lmao.
     // hmm does this trigger nx flag 4 ...?
     adminConnections.clear();
   }
@@ -336,8 +459,8 @@ void workerHandler() {
   workerhandlerMessage nx;
   std::set<unsigned long> pingUnresponded;
   auto postWorkerDisconnect = [&](unsigned long conn) {
-    for(int i:workerConnections[conn].attachedWorkunits)
-      pendingInbound.enqueue({i, 0, "", {}});
+    for(int i:workerConnections[conn].attachedWorkunits) // this is done with a lock on it anyways
+      pendingInbound.enqueue({i, conn, 'u', "", {}});
   };
   uint64_t lastping = 0;
   while (workerHandler_queue.wait_dequeue(nx), nx.flag != 2) {
@@ -419,6 +542,16 @@ void fn(mg_connection* c, int ev, void* ev_data) {
         adminConsoleHandler_running++;
         std::thread t(adminConsoleHandler); t.detach();
       }
+      auto sv = mg_str(banner.c_str());
+      mg_ws_send(c, sv.buf, sv.len, WEBSOCKET_OP_TEXT);
+      if(longgestPartial.size()) {
+        sv = mg_str(longgestPartial.c_str());
+        mg_ws_send(c, sv.buf, sv.len, WEBSOCKET_OP_TEXT);
+      }
+      if(oscillatorComplete.size()) {
+        sv = mg_str(oscillatorComplete.c_str());
+        mg_ws_send(c, sv.buf, sv.len, WEBSOCKET_OP_TEXT);
+      }
     }
     /* connected units end*/
     else if (mg_match(hm->uri, mg_str("/worker-websocket"), NULL)) {
@@ -452,53 +585,45 @@ void fn(mg_connection* c, int ev, void* ev_data) {
       // returns amount * [workunit identifier]
       std::stringstream co(_mg_str_to_stdstring(hm->body));
       std::stringstream res;
-      int wsid;
+      unsigned long wsid;
       co >> wsid;
-      bool ephemeral;
+      int ephemeral;
       co >> ephemeral;
       if(!ephemeral) {
         // TODO. not yet implemented
         res << "0\n";
       } else {
-        const std::lock_guard<std::mutex> lock(pendingOutbound_mutex);
-        const std::lock_guard<std::mutex> lock2(workerConnections_mutex);
-        if(workerConnections.find(wsid) == workerConnections.end()) {
-          // ??? you already ended???
-          res << "0\n";
-        } else {
-          int amnt; co >> amnt;
-          int cnt = std::min(amnt, (int)pendingOutbound.size());
-          res << cnt<<'\n';
-          for(int i=0; i<cnt; i++) {
-            int onx = pendingOutbound.front(); pendingOutbound.pop();
-            workerConnections[wsid].attachedWorkunits.insert(onx);
-            res<<onx<<' '<<tree[onx].depth%p;
-            for(uint64_t x:getState(onx)) res<<' '<<x;
-            res << '\n';
-          }
+        int amnt; co >> amnt;
+        std::vector<pendingOutboundMessage> nodes(amnt);
+        nodes.resize(pendingOutbound.try_dequeue_bulk(nodes.begin(), amnt));
+        // int cnt = std::min(amnt, (int)pendingOutbound.size());
+        res << nodes.size()<<'\n';
+        for(auto& pom:nodes) {
+          pendingInbound.enqueue({pom.id, wsid, 's', "", {}});
+          res<<pom.id<<' '<<pom.depth;
+          for(uint64_t x:pom.rows) res<<' '<<x;
+          res << '\n';
         }
-        mg_http_reply(c, 200, "Content-Type: text/raw\n", "%s", res.str().c_str());
       }
+      assert(!co.fail());
+      mg_http_reply(c, 200, "Content-Type: text/raw\n", "%s", res.str().c_str());
     } else if(mg_match(hm->uri, mg_str("/returnwork"), NULL)) {
       // POST request, should contain websocket connection id, workunit id, status - 0 or 1
       // if status is 1, further contain contributor id and all children
       std::stringstream co(_mg_str_to_stdstring(hm->body));
-      int wsid, id, status;
+      unsigned long wsid;
+      int id, status;
       co >> wsid >> id >> status;
-      { const std::lock_guard<std::mutex> lock2(workerConnections_mutex);
-        if(workerConnections.find(wsid) != workerConnections.end())
-          if(workerConnections[wsid].attachedWorkunits.contains(id))
-            workerConnections[wsid].attachedWorkunits.erase(id);
-      }
       if(status == 0)
-        pendingInbound.enqueue({id, 0, "", {}});
+        pendingInbound.enqueue({id, wsid, 'u', "", {}});
       else {
         std::string cid; co >> cid;
         int ch; co >> ch;
         std::vector<uint64_t> rows(ch);
         for(int i=0; i<ch; i++) co >> rows[i];
-        pendingInbound.enqueue({id, 1, cid, rows});
+        pendingInbound.enqueue({id, wsid, 'c', cid, rows});
       }
+      assert(!co.fail());
       mg_http_reply(c, 200, "Content-Type: text/raw\n", "OK");
     } 
     /* ?? */
@@ -507,9 +632,9 @@ void fn(mg_connection* c, int ev, void* ev_data) {
       mg_http_reply(c, 404, "Content-Type: text/raw\n", "what\n");
     }
   } else if(ev == MG_EV_OPEN) {
-    MG_INFO(("open triggered"));
+    // MG_INFO(("open triggered"));
   } else if(ev == MG_EV_CLOSE) {
-    MG_INFO(("close triggered, %d", c->id));
+    // MG_INFO(("close triggered, %d", c->id));
   } else if(ev == MG_EV_WS_CTL) {
     mg_ws_message* wm = (mg_ws_message*) ev_data;
     uint32_t s = (wm->flags) & 0xF0;
