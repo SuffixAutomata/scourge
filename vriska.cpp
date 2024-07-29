@@ -145,7 +145,7 @@ void betaUniverse() {
     genNextRows(nx.rows, dep, l4h, [&](uint64_t x){ 
       resp.push_back(x);
     });
-    // std::cerr << "found "<<resp.size()<<" solutions\n";
+    std::cerr << "found "<<resp.size()<<" solutions\n";
     B2A.enqueue({nx.id, resp});
   }
 }
@@ -172,7 +172,7 @@ void computationManager(mg_mgr* const& mgr, const unsigned long conn) {
   for(int s=0;s<2;s++){ix>>FS;leftborder[s]=std::vector<uint64_t>(FS);
   for(int i=0;i<FS;i++)ix>>leftborder[s][i];}
   for(int i=0;i<threads;i++) universes.emplace_back(betaUniverse);
-  int qsize=0, desired = threads+1;
+  int qsize=0, desired = threads*20;
   auto handle = [&]() {
     if(qsize == desired) return;
     woker(mgr, conn, {1, std::to_string(cid)+" 1 "+std::to_string(desired - qsize)});
@@ -185,26 +185,24 @@ void computationManager(mg_mgr* const& mgr, const unsigned long conn) {
       A2B.enqueue({id, depth, rows});
     }
     qsize += cnt;
+    std::cerr << qsize << std::endl;
     if(qsize != desired) {
       std::this_thread::sleep_for(std::chrono::seconds(3));
-      B2A.enqueue({-1, {}});
     }
   };
   handle();
-  B2Aunit nx;
+  std::vector<B2Aunit> nxb(desired);
   while(1) {
-    B2A.wait_dequeue(nx);
-    if(nx.id == -1) {
-      B2A.try_dequeue(nx);
-    }
-    if(nx.id != -1) {
+    int cnt = B2A.try_dequeue_bulk(nxb.begin(), desired);
+    for(int i=0; i<cnt; i++) {
+      auto& nx = nxb[i];
       // std::cerr<<"oh hey\n";
       qsize--;
       std::stringstream x; x<<cid << ' ' << nx.id << " 1\n";
       x<<contributorID<< ' ' << nx.nextrows.size(); for(auto t:nx.nextrows)x<<' '<<t;x<<'\n';
       woker(mgr, conn, {2, x.str()});
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
     handle();
   }
   // fetch threads+1 workunits

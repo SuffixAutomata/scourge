@@ -1,3 +1,5 @@
+// TODO: why do nodes swallow & forget about their work units?
+
 #include "mongoose.h"
 
 #include <bits/stdc++.h>
@@ -676,7 +678,7 @@ void fn(mg_connection* c, int ev, void* ev_data) {
   }
 }
 
-int main(void) {
+int main(int argc, const char* argv[]) {
   mg_mgr mgr;
   // ca_cert = mg_file_read(&mg_fs_posix, "certs/ca.crt");
   // server_cert = mg_file_read(&mg_fs_posix, "certs/server.crt");
@@ -684,7 +686,10 @@ int main(void) {
   mg_mgr_init(&mgr);        // Initialise event manager
   mg_log_set(MG_LL_INFO); 
   // mg_http_listen(&mgr, "https://localhost:8000", fn, NULL);  // Create listener
-  mg_http_listen(&mgr, "http://localhost:8000", fn, NULL);  // Create listener
+  std::string hostname = "http://localhost:8000";
+  if(argc != 1) hostname = argv[1];
+  mg_http_listen(&mgr, hostname.c_str(), fn, NULL);  // Create listener
+  std::cerr << "Listening on " << hostname << std::endl;
   mg_wakeup_init(&mgr);  // Initialise wakeup socket pair
   for (;;) {             // Event loop
     mg_mgr_poll(&mgr, 1000);
