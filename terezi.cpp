@@ -254,7 +254,7 @@ void workunitHandler() {
         dumpTree(autosave1);
         swap(autosave1, autosave2);
         std::stringstream res2; res2 << "autosaved to "<<autosave1;
-        adminConsoleHandler_queue.enqueue({1, 0, res.str()});
+        adminConsoleHandler_queue.enqueue({1, 0, res2.str()});
       }
     }
   }
@@ -304,7 +304,7 @@ void adminConsoleHandler() {
       f << latencies.size() << " connections<br/>latencies:";
       for(auto i: latencies) f<<" "<<i<<"ms";
       f<< "<br/>uptimes:";
-      f<<std::setprecision(1);
+      f<<std::fixed<<std::setprecision(1);
       for(auto i: uptimes) f<<" "<<i/60000.0<<"m";
       woker(mgr, nx.conn_id, {1, f.str()});
     } else if(com == "init") {
@@ -411,7 +411,7 @@ void adminConsoleHandler() {
         if(tree[i].state != 'd') ongoing[tree[i].depth]++;
         else if(i>=2*p) conIdx[tree[i].contrib].first++;
       }
-      fx << treeSize << "nodes<br>";
+      fx << treeSize << " nodes<br>";
       fx << "max depth "<<maxdep <<"<br>";
       fx << "profile";
       for(int i=0; i<=maxdep; i++){
