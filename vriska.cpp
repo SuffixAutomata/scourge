@@ -145,7 +145,7 @@ void betaUniverse() {
     genNextRows(nx.rows, dep, l4h, [&](uint64_t x){ 
       resp.push_back(x);
     });
-    std::cerr << "found "<<resp.size()<<" solutions\n";
+    // std::cerr << "found "<<resp.size()<<" solutions\n";
     B2A.enqueue({nx.id, resp});
   }
 }
@@ -155,10 +155,13 @@ void computationManager(mg_mgr* const& mgr, const unsigned long conn) {
   // computationManager runs to end of main
   // sleep(1);
   std::this_thread::sleep_for(std::chrono::seconds(1));
-  woker(mgr, conn, {0, ""});
-  wakeupCall r;
-  response.wait_dequeue(r);
-  std::stringstream ix(r.message);
+  auto woke_and_wait = [&](const wakeupCall& s) {
+    woker(mgr, conn, s);
+    wakeupCall r;
+    response.wait_dequeue(r);
+    return r.message;
+  };  
+  std::stringstream ix(woke_and_wait({0, ""}));
   /* res << p << ' ' << width << ' ' << sym << ' ' << l4h << ' ' << maxwid << ' ' << stator << ' ';
       res << filters.size(); for(auto i:filters) res << ' ' << i;
       for(int s=0;s<2; s++){
@@ -175,9 +178,7 @@ void computationManager(mg_mgr* const& mgr, const unsigned long conn) {
   int qsize=0, desired = threads*20;
   auto handle = [&]() {
     if(qsize == desired) return;
-    woker(mgr, conn, {1, std::to_string(cid)+" 1 "+std::to_string(desired - qsize)});
-    response.wait_dequeue(r);
-    std::stringstream x(r.message);
+    std::stringstream x(woke_and_wait({1, std::to_string(cid)+" 1 "+std::to_string(desired - qsize)}));
     int cnt; x >> cnt;
     for(int i=0; i<cnt; i++) {
       int id, depth; x >> id >> depth;
@@ -194,14 +195,14 @@ void computationManager(mg_mgr* const& mgr, const unsigned long conn) {
   std::vector<B2Aunit> nxb(desired);
   while(1) {
     int cnt = B2A.try_dequeue_bulk(nxb.begin(), desired);
+    std::stringstream x; x << cnt << ' ' << cid<< '\n';;
     for(int i=0; i<cnt; i++) {
       auto& nx = nxb[i];
-      // std::cerr<<"oh hey\n";
       qsize--;
-      std::stringstream x; x<<cid << ' ' << nx.id << " 1\n";
+      std::stringstream x; x<<nx.id << " 1\n";
       x<<contributorID<< ' ' << nx.nextrows.size(); for(auto t:nx.nextrows)x<<' '<<t;x<<'\n';
-      woker(mgr, conn, {2, x.str()});
     }
+    assert(woke_and_wait({2, x.str()}) == "OK");
     std::this_thread::sleep_for(std::chrono::milliseconds(3000));
     handle();
   }

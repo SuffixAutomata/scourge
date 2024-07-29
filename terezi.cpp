@@ -610,20 +610,24 @@ void fn(mg_connection* c, int ev, void* ev_data) {
       assert(!co.fail());
       mg_http_reply(c, 200, "Content-Type: text/raw\n", "%s", res.str().c_str());
     } else if(mg_match(hm->uri, mg_str("/returnwork"), NULL)) {
-      // POST request, should contain websocket connection id, workunit id, status - 0 or 1
+      // POST request, should contain amount, websocket connection id
+      // then amount times the following: workunit id, status - 0 or 1
       // if status is 1, further contain contributor id and all children
       std::stringstream co(_mg_str_to_stdstring(hm->body));
-      unsigned long wsid;
-      int id, status;
-      co >> wsid >> id >> status;
-      if(status == 0)
-        pendingInbound.enqueue({id, wsid, 'u', "", {}});
-      else {
-        std::string cid; co >> cid;
-        int ch; co >> ch;
-        std::vector<uint64_t> rows(ch);
-        for(int i=0; i<ch; i++) co >> rows[i];
-        pendingInbound.enqueue({id, wsid, 'c', cid, rows});
+      int amnt; co >> amnt;
+      unsigned long wsid; co >> wsid;
+      for(int i=0; i<amnt; i++) {
+        int id, status;
+        co >> id >> status;
+        if(status == 0)
+          pendingInbound.enqueue({id, wsid, 'u', "", {}});
+        else {
+          std::string cid; co >> cid;
+          int ch; co >> ch;
+          std::vector<uint64_t> rows(ch);
+          for(int i=0; i<ch; i++) co >> rows[i];
+          pendingInbound.enqueue({id, wsid, 'c', cid, rows});
+        }
       }
       assert(!co.fail());
       mg_http_reply(c, 200, "Content-Type: text/raw\n", "OK");
