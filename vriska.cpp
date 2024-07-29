@@ -186,7 +186,7 @@ void computationManager(mg_mgr* const& mgr, const unsigned long conn) {
       A2B.enqueue({id, depth, rows});
     }
     qsize += cnt;
-    std::cerr << qsize << std::endl;
+    // std::cerr << qsize << std::endl;
     if(qsize != desired) {
       std::this_thread::sleep_for(std::chrono::seconds(3));
     }
@@ -195,14 +195,16 @@ void computationManager(mg_mgr* const& mgr, const unsigned long conn) {
   std::vector<B2Aunit> nxb(desired);
   while(1) {
     int cnt = B2A.try_dequeue_bulk(nxb.begin(), desired);
-    std::stringstream x; x << cnt << ' ' << cid<< '\n';;
-    for(int i=0; i<cnt; i++) {
-      auto& nx = nxb[i];
-      qsize--;
-      std::stringstream x; x<<nx.id << " 1\n";
-      x<<contributorID<< ' ' << nx.nextrows.size(); for(auto t:nx.nextrows)x<<' '<<t;x<<'\n';
+    if(cnt != 0) {
+      std::stringstream x; x << cnt << ' ' << cid<< '\n';;
+      for(int i=0; i<cnt; i++) {
+        auto& nx = nxb[i];
+        qsize--;
+        x<<nx.id << " 1\n";
+        x<<contributorID<< ' ' << nx.nextrows.size(); for(auto t:nx.nextrows)x<<' '<<t;x<<'\n';
+      }
+      assert(woke_and_wait({2, x.str()}) == "OK");
     }
-    assert(woke_and_wait({2, x.str()}) == "OK");
     std::this_thread::sleep_for(std::chrono::milliseconds(3000));
     handle();
   }
@@ -242,9 +244,11 @@ void handler_httpconn(mg_connection* c, int ev, void* ev_data) {
               "%s %s HTTP/1.0\nHost: %.*s\nContent-Type: octet-stream\nContent-Length: %d\n\n",
               method.c_str(), mg_url_uri(endpoint.c_str()), (int) host.len, host.buf, content_length);
     mg_send(c, data->message.c_str(), content_length);
-    std::cerr << "sent to " << endpoint << "\n";
+    std::cerr << "sent to " << endpoint << ": " << data->message << "\n";
     delete data;
   } else if (ev == MG_EV_HTTP_MSG) {
+    if((*(int *) (c->data+8)) == -1) { c->is_draining = 1; return; }
+    (*(int *) (c->data+8)) = -1;
     // Response is received. Print it
     mg_http_message* hm = (mg_http_message*) ev_data;
     response.enqueue({0, _mg_str_to_stdstring(hm->body)});

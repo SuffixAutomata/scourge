@@ -402,17 +402,11 @@ void adminConsoleHandler() {
       int maxdep = 0;
       std::vector<std::pair<int, std::string>> conIdx;
       for(auto s:contributors) conIdx.push_back({0, s});
-      std::cerr << treeSize << std::endl;
-      assert(treeSize <= 1000);
       for(int i=0; i<treeSize; i++) {
         maxdep = std::max(maxdep, tree[i].depth);
-        std::cerr << treeSize << std::endl;
-        assert(treeSize <= 1000);
       }
       std::vector<int> ongoing(maxdep+1), total(maxdep+1);
       for(int i=0;i<treeSize; i++) {
-        std::cerr << i << ' ' << treeSize << std::endl;
-        assert(treeSize <= 1000);
         total[tree[i].depth]++;
         if(tree[i].state != 'd') ongoing[tree[i].depth]++;
         else if(i>=2*p) conIdx[tree[i].contrib].first++;
@@ -587,15 +581,15 @@ void fn(mg_connection* c, int ev, void* ev_data) {
       // returns amount * [workunit identifier]
       std::stringstream co(_mg_str_to_stdstring(hm->body));
       std::stringstream res;
-      unsigned long wsid;
+      unsigned long wsid=0;
       co >> wsid;
-      int ephemeral;
+      int ephemeral=0;
       co >> ephemeral;
       if(!ephemeral) {
         // TODO. not yet implemented
         res << "0\n";
       } else {
-        int amnt; co >> amnt;
+        int amnt=0; co >> amnt;
         std::vector<pendingOutboundMessage> nodes(amnt);
         nodes.resize(pendingOutbound.try_dequeue_bulk(nodes.begin(), amnt));
         // int cnt = std::min(amnt, (int)pendingOutbound.size());
@@ -617,7 +611,7 @@ void fn(mg_connection* c, int ev, void* ev_data) {
       int amnt; co >> amnt;
       unsigned long wsid; co >> wsid;
       for(int i=0; i<amnt; i++) {
-        int id, status;
+        int id=0, status=0;
         co >> id >> status;
         if(status == 0)
           pendingInbound.enqueue({id, wsid, 'u', "", {}});
@@ -629,8 +623,10 @@ void fn(mg_connection* c, int ev, void* ev_data) {
           pendingInbound.enqueue({id, wsid, 'c', cid, rows});
         }
       }
-      assert(!co.fail());
-      mg_http_reply(c, 200, "Content-Type: text/raw\n", "OK");
+      if(co.fail())
+        mg_http_reply(c, 200, "Content-Type: text/raw\n", "FAIL");
+      else
+        mg_http_reply(c, 200, "Content-Type: text/raw\n", "OK");
     } 
     /* ?? */
     else {
