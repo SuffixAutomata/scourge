@@ -366,6 +366,19 @@ void adminConsoleHandler() {
             for(int j=0; j<p; j++) if(t[j] == 'o') leftborder[idx][i] |= (1ull << j);
           }
         }
+        exInitrow = std::vector<uint64_t>(2*p);
+        for(int i=0; i<2*p; i++) {
+          uint64_t x = 0; std::string row;
+          s >> row;
+          if(sz(row) != width)  {
+            woker(mgr, nx.conn_id, {1, "failed, bad row length"});
+            goto fail;
+          }
+          for (int j = 0; j < width; j++)
+            if (row[j] == 'o')
+              x |= (1ull << j);
+          exInitrow[i] = x;
+        }
       }
       assert(treeSize == 2*p);
       tree[2*p-1].state = 'q';

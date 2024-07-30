@@ -39,7 +39,7 @@ void genNextRows(std::vector<uint64_t> &state, int depth, int ahead, auto fn) {
   int phase = depth % p;
   std::vector<int> inst = {1, 0, -2, 0};
   auto idx = [&](int j) { return ((sym == 1) ? std::min(j, width - j - 1) : j); };
-  auto get = [&](int r, int j, int t, int v) {
+  auto get = [&](int r, int j, int t, int v=0) {
     if (t == p)
       t = 0, j = (sym == 2) ? width - j - 1 : j;
     // std::cerr << r << ' ' << j << ' ' << t << ' ';
@@ -69,13 +69,13 @@ void genNextRows(std::vector<uint64_t> &state, int depth, int ahead, auto fn) {
   for (int row = sz(state); row < sz(state) + ahead; row++) {
     int r = (row + phase) / p, t = (row + phase) % p;
     for (int j = -1; j <= width; j++) {
-      auto u = {get(r - 2, j - 1, t, 0), get(r - 2, j, t, 0), get(r - 2, j + 1, t, 0),
+      std::vector<int> u = {get(r - 2, j - 1, t, 0), get(r - 2, j, t, 0), get(r - 2, j + 1, t, 0),
               get(r - 1, j - 1, t, 0), get(r - 1, j, t, 0), get(r - 1, j + 1, t, 0),
               get(r, j - 1, t, 0), get(r, j, t, 0), get(r, j + 1, t, 0),
               get(r - 1, j, t + 1, 0)};
       trans(u, inst);
       if(exInitrow.size()) {
-        auto u2 = {get(r - 2, j - 1, t, 1), get(r - 2, j, t, 1), get(r - 2, j + 1, t, 1),
+        std::vector<int> u2 = {get(r - 2, j - 1, t, 1), get(r - 2, j, t, 1), get(r - 2, j + 1, t, 1),
               get(r - 1, j - 1, t, 1), get(r - 1, j, t, 1), get(r - 1, j + 1, t, 1),
               get(r, j - 1, t, 1), get(r, j, t, 1), get(r, j + 1, t, 1),
               get(r - 1, j, t + 1, 1)};

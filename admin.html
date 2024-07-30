@@ -77,6 +77,7 @@
           msg += E('filters').value + '\n' + E('filterrows').value + '\n';
           msg += E('column0cnt').value + ' ' + E('column0').value + '\n';
           msg += E('column1cnt').value + ' ' + E('column1').value + '\n';
+          msg += E('exInitrows') + '\n';
         } else {
           msg += "NO\n";
         }
@@ -129,6 +130,7 @@
         E('column0').value = column0cnt.split(' ').slice(1).join(' ');
         E('column1cnt').value = Number(column1cnt.split(' ')[0]);
         E('column1').value = column1cnt.split(' ').slice(1).join(' ');
+        E('exInitrows').value = lines.slice(4 + 2 * period + filters, 3 + 4 * period + filters).join('\n');
       } else {
         additionalOptionsNo.checked = true;
         toggleAdditionalOptions();
