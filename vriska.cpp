@@ -8,6 +8,7 @@
 
 int p, width, sym, l4h;
 int maxwid, stator;
+std::vector<uint64_t> exInitrow;
 std::vector<uint64_t> filters;
 std::vector<uint64_t> leftborder[2];
 
@@ -38,7 +39,7 @@ void genNextRows(std::vector<uint64_t> &state, int depth, int ahead, auto fn) {
   int phase = depth % p;
   std::vector<int> inst = {1, 0, -2, 0};
   auto idx = [&](int j) { return ((sym == 1) ? std::min(j, width - j - 1) : j); };
-  auto get = [&](int r, int j, int t) {
+  auto get = [&](int r, int j, int t, int v) {
     if (t == p)
       t = 0, j = (sym == 2) ? width - j - 1 : j;
     // std::cerr << r << ' ' << j << ' ' << t << ' ';
@@ -54,8 +55,11 @@ void genNextRows(std::vector<uint64_t> &state, int depth, int ahead, auto fn) {
     // std::cerr << "->"<<r<<'\n';
     if (j <= -1 || j >= width)
       return (2 - 0);
-    if (r < sz(state))
+    if (r < sz(state)) {
+      if(v && realRow < 2)
+        return (2 - !!(exInitrow[r+depth-2*p] & (1ull << j)));
       return (2 - !!(state[r] & (1ull << j)));
+    }
     return 3 + idx(j) + (r - sz(state)) * width;
   };
   auto eqify = [&](int i, int j) {
@@ -64,12 +68,20 @@ void genNextRows(std::vector<uint64_t> &state, int depth, int ahead, auto fn) {
   };
   for (int row = sz(state); row < sz(state) + ahead; row++) {
     int r = (row + phase) / p, t = (row + phase) % p;
-    for (int j = -1; j <= width; j++)
-      trans({get(r - 2, j - 1, t), get(r - 2, j, t), get(r - 2, j + 1, t),
-              get(r - 1, j - 1, t), get(r - 1, j, t), get(r - 1, j + 1, t),
-              get(r, j - 1, t), get(r, j, t), get(r, j + 1, t),
-              get(r - 1, j, t + 1)},
-            inst);
+    for (int j = -1; j <= width; j++) {
+      auto u = {get(r - 2, j - 1, t, 0), get(r - 2, j, t, 0), get(r - 2, j + 1, t, 0),
+              get(r - 1, j - 1, t, 0), get(r - 1, j, t, 0), get(r - 1, j + 1, t, 0),
+              get(r, j - 1, t, 0), get(r, j, t, 0), get(r, j + 1, t, 0),
+              get(r - 1, j, t + 1, 0)};
+      trans(u, inst);
+      if(exInitrow.size()) {
+        auto u2 = {get(r - 2, j - 1, t, 1), get(r - 2, j, t, 1), get(r - 2, j + 1, t, 1),
+              get(r - 1, j - 1, t, 1), get(r - 1, j, t, 1), get(r - 1, j + 1, t, 1),
+              get(r, j - 1, t, 1), get(r, j, t, 1), get(r, j + 1, t, 1),
+              get(r - 1, j, t + 1, 1)};
+        if(u != u2) trans(u2, inst);
+      }
+    }
     if (t != p - 1)
       for (int j = 0; j < width; j++)
         if (width - j <= stator)
@@ -170,7 +182,9 @@ void computationManager(mg_mgr* const& mgr, const unsigned long conn) {
       }
       res<<'\n';*/
   ix >> p >> width >> sym >> l4h >> maxwid >> stator;
-  int FS; ix>>FS; filters = std::vector<uint64_t>(FS);
+  int FS; ix>>FS; exInitrow = std::vector<uint64_t>(FS);
+  for(int i=0;i<FS;i++)ix>>exInitrow[i];
+  filters = std::vector<uint64_t>(FS);
   for(int i=0;i<FS;i++)ix>>filters[i];
   for(int s=0;s<2;s++){ix>>FS;leftborder[s]=std::vector<uint64_t>(FS);
   for(int i=0;i<FS;i++)ix>>leftborder[s][i];}

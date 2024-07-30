@@ -18,6 +18,7 @@ std::mutex searchtree_mutex;
 struct node { uint64_t row; int depth, shift, parent, contrib; char state; };
 node* tree = new node[16777216];
 int treeSize = 0, treeAlloc = 16777216;
+std::vector<uint64_t> exInitrow;
 std::vector<uint64_t> filters;
 std::vector<uint64_t> leftborder[2];
 std::vector<std::string> contributors; std::map<std::string, int> contributorIDs;
@@ -25,6 +26,7 @@ std::vector<std::string> contributors; std::map<std::string, int> contributorIDs
 void dumpTree(std::string fn) {
   std::ofstream fx(fn);
   fx << p << ' ' << width << ' ' << sym << ' ' << stator << ' ' << l4h << '\n';
+  fx << exInitrow.size(); for(auto s:exInitrow){fx << ' ' << s;} fx << '\n';
   fx << filters.size(); for(auto s:filters){fx << ' ' << s;} fx << '\n';
   for(int t=0;t<2;t++){ fx<<leftborder[t].size(); for(auto s:leftborder[t]){fx<<' '<<s;}fx<<'\n';}
   fx<<treeSize<<'\n';
@@ -39,7 +41,9 @@ void loadTree(std::string fn) {
   using namespace std;
   ifstream fx(fn);
   fx>>p>>width>>sym>>stator>>l4h;
-  int FS; fx>>FS; filters=std::vector<uint64_t>(FS);
+  int FS; fx>>FS; exInitrow=std::vector<uint64_t>(FS);
+  for(int i=0;i<FS;i++)fx>>exInitrow[i];
+  fx>>FS; filters=std::vector<uint64_t>(FS);
   for(int i=0;i<FS;i++)fx>>filters[i];
   for(int pp=0;pp<2;pp++){fx>>FS;leftborder[pp]=std::vector<uint64_t>(FS);
   for(int t=0;t<FS;t++)fx>>leftborder[pp][t];}
@@ -568,6 +572,7 @@ void fn(mg_connection* c, int ev, void* ev_data) {
       // v2: merge with /getwork
       std::stringstream res;
       res << p << ' ' << width << ' ' << sym << ' ' << l4h << ' ' << maxwid << ' ' << stator << ' ';
+      res << exInitrow.size(); for(auto i:exInitrow) res << ' ' << i;
       res << filters.size(); for(auto i:filters) res << ' ' << i;
       for(int s=0;s<2; s++){
         res<<' '<<leftborder[s].size();
