@@ -9,10 +9,13 @@ mongoose.o: mongoose.c
 	# $(CC) -c $< $(CFLAGS) -DMG_TLS=MG_TLS_OPENSSL
 	$(CC) -c $< $(CFLAGS)
 
-terezi: terezi.cpp mongoose.o
+terezi: terezi.cpp mongoose.o logic.h
 	$(CC) -o $@ $^ $(LDFLAGS)
 
-vriska: vriska.cpp cadical/build/libcadical.a mongoose.o
+vriska: vriska.cpp cadical/build/libcadical.a mongoose.o logic.h satlogic.h
+	$(CC) -o $@ $^ $(LDFLAGS) -static
+
+vriska_core: vriska_core.cpp cadical/build/libcadical.a logic.h satlogic.h
 	$(CC) -o $@ $^ $(LDFLAGS) -static
 
 clean:

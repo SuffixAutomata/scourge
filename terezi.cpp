@@ -586,7 +586,7 @@ void fn(mg_connection* c, int ev, void* ev_data) {
       std::stringstream res;
       res << p << ' ' << width << ' ' << sym << ' ' << l4h << ' ' << maxwid << ' ' << stator << ' ';
       res << exInitrow.size(); for(auto i:exInitrow) res << ' ' << i;
-      res << filters.size(); for(auto i:filters) res << ' ' << i;
+      res << ' ' << filters.size(); for(auto i:filters) res << ' ' << i;
       for(int s=0;s<2; s++){
         res<<' '<<leftborder[s].size();
         for(auto i:leftborder[s]) res<<' '<<i;
