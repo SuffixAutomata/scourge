@@ -650,6 +650,11 @@ void fn(mg_connection* c, int ev, void* ev_data) {
         res << "0\n";
       } else {
         int amnt=0; co >> amnt;
+        if(!(0 <= amnt && amnt <= 10000) || co.fail()) {
+          std::cerr << "getwork failed: " << _mg_str_to_stdstring(hm->body) << std::endl;
+          mg_http_reply(c, 200, "Content-Type: text/raw\n", "-1");
+          return;
+        }
         std::vector<pendingOutboundMessage> nodes(amnt);
         nodes.resize(pendingOutbound.try_dequeue_bulk(nodes.begin(), amnt));
         // int cnt = std::min(amnt, (int)pendingOutbound.size());
@@ -685,8 +690,10 @@ void fn(mg_connection* c, int ev, void* ev_data) {
           pendingInbound.enqueue({id, wsid, 'c', cid, rows});
         }
       }
-      if(co.fail())
+      if(co.fail()) {
+        std::cerr << "returnwork failed: " << _mg_str_to_stdstring(hm->body) << std::endl;
         mg_http_reply(c, 200, "Content-Type: text/raw\n", "FAIL");
+      }
       else
         mg_http_reply(c, 200, "Content-Type: text/raw\n", "OK");
     } 

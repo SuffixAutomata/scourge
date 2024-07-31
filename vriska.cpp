@@ -169,6 +169,8 @@ void handler_httpconn(mg_connection* c, int ev, void* ev_data) {
   }
 }
 
+unsigned long timeout2;
+
 void fn(mg_connection* c, int ev, void* ev_data) {
   if (ev == MG_EV_ERROR) {
     std::cerr << "connection error: " << c->id << '\n';
@@ -201,7 +203,8 @@ void fn(mg_connection* c, int ev, void* ev_data) {
       stop_mgr = true;
     }
   } else if (ev == MG_EV_POLL) {
-    if(mg_millis() > (hostConnection ? timeout : 60*1000)) {
+    if(mg_millis() > (hostConnection ? timeout : timeout2)) {
+      std::cerr << mg_millis() << ' ' << (hostConnection ? timeout : timeout2) << '\n';
       static bool idx = 0;
       timeout = mg_millis() + 10 * 1000;
       std::cerr << "disconnecting\n";
@@ -236,6 +239,7 @@ int main(int argc, char* argv[]) {
   mg_mgr_init(&mgr);
   mg_wakeup_init(&mgr);  // Initialise wakeup socket pair
   timeout = mg_millis() + std::stoi(argv[3]) * 1000ull;
+  timeout2 = mg_millis() + 60 * 1000ull;
   c = mg_ws_connect(&mgr, host_endpoint.c_str(), fn, &done, NULL);
   while (c && !stop_mgr) {
     mg_mgr_poll(&mgr, 1000);
