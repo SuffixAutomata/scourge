@@ -95,6 +95,7 @@ void computationManager(mg_mgr* const& mgr, const unsigned long conn) {
     if(qsize == desired) return;
     std::stringstream x(woke_and_wait({1, std::to_string(cid)+" 1 "+std::to_string(desired - qsize)}));
     int cnt; x >> cnt;
+    assert(cnt >= 0); // -1: fail, server asked us to die
     for(int i=0; i<cnt; i++) {
       int id, depth; x >> id >> depth;
       std::vector<uint64_t> rows(2*p); for(auto& s:rows)x>>s;

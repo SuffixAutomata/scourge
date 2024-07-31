@@ -654,8 +654,10 @@ void fn(mg_connection* c, int ev, void* ev_data) {
           res << '\n';
         }
       }
-      assert(!co.fail());
-      mg_http_reply(c, 200, "Content-Type: text/raw\n", "%s", res.str().c_str());
+      if(co.fail())
+        mg_http_reply(c, 200, "Content-Type: text/raw\n", "-1");
+      else
+        mg_http_reply(c, 200, "Content-Type: text/raw\n", "%s", res.str().c_str());
     } else if(mg_match(hm->uri, mg_str("/returnwork"), NULL)) {
       // POST request, should contain amount, websocket connection id
       // then amount times the following: workunit id, status - 0 or 1
