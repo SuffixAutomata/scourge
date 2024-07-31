@@ -19,7 +19,7 @@ std::string contributorID;
 uint64_t timeout;
 std::vector<std::thread> universes;
 int threads;
-bool stop_mgr = false;
+std::atomic_bool stop_mgr = false;
 long long cid = -1;
 mg_connection* hostConnection;
 
@@ -70,17 +70,11 @@ void computationManager(mg_mgr* const& mgr, const unsigned long conn) {
   auto woke_and_wait = [&](const wakeupCall& s) {
     woker(mgr, conn, s);
     wakeupCall r;
-    response.wait_dequeue(r);
+    if(!response.wait_dequeue_timed(r, std::chrono::seconds(60)))
+      stop_mgr = true;
     return r.message;
   };  
   std::stringstream ix(woke_and_wait({0, ""}));
-  /* res << p << ' ' << width << ' ' << sym << ' ' << l4h << ' ' << maxwid << ' ' << stator << ' ';
-      res << filters.size(); for(auto i:filters) res << ' ' << i;
-      for(int s=0;s<2; s++){
-        res<<' '<<leftborder[s].size();
-        for(auto i:leftborder[s]) res<<' '<<i;
-      }
-      res<<'\n';*/
   ix >> p >> width >> sym >> l4h >> maxwid >> stator;
   int FS; ix>>FS; exInitrow = std::vector<uint64_t>(FS);
   for(int i=0;i<FS;i++)ix>>exInitrow[i];
@@ -207,11 +201,13 @@ void fn(mg_connection* c, int ev, void* ev_data) {
       stop_mgr = true;
     }
   } else if (ev == MG_EV_POLL) {
-    if(mg_millis() > timeout) {
+    if(mg_millis() > (hostConnection ? timeout : 60*1000)) {
+      static bool idx = 0;
       timeout = mg_millis() + 10 * 1000;
       std::cerr << "disconnecting\n";
       mg_ws_send(hostConnection, NULL, 0, WEBSOCKET_OP_CLOSE);
-      // stop_mgr = true;
+      if(idx == true) stop_mgr = true;
+      else idx = true;
     }
   } else if (ev == MG_EV_WAKEUP) {
     // struct mg_str *data = (struct mg_str *) ev_data;
