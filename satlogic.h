@@ -62,13 +62,16 @@ void genNextRows(std::vector<uint64_t> &state, int depth, int ahead, auto fn) {
               get(r, j - 1, t, 0), get(r, j, t, 0), get(r, j + 1, t, 0),
               get(r - 1, j, t + 1, 0)};
       trans(u, inst);
-      if(exInitrow.size()) {
-        std::vector<int> u2 = {get(r - 2, j - 1, t, 1), get(r - 2, j, t, 1), get(r - 2, j + 1, t, 1),
-              get(r - 1, j - 1, t, 1), get(r - 1, j, t, 1), get(r - 1, j + 1, t, 1),
-              get(r, j - 1, t, 1), get(r, j, t, 1), get(r, j + 1, t, 1),
-              get(r - 1, j, t + 1, 1)};
-        if(u != u2) trans(u2, inst);
-      }
+      // if(exInitrow.size()) {
+      //   std::vector<int> u2 = {get(r - 2, j - 1, t, 1), get(r - 2, j, t, 1), get(r - 2, j + 1, t, 1),
+      //         get(r - 1, j - 1, t, 1), get(r - 1, j, t, 1), get(r - 1, j + 1, t, 1),
+      //         get(r, j - 1, t, 1), get(r, j, t, 1), get(r, j + 1, t, 1),
+      //         get(r - 1, j, t + 1, 1)};
+      //   if(u != u2) {
+      //     std::cerr << ' ' << row << ' ' << j << '\n';
+      //     trans(u2, inst);
+      //   }
+      // }
     }
     if (t != p - 1)
       for (int j = 0; j < width; j++)

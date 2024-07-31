@@ -1,6 +1,7 @@
 #include <vector>
 #include <fstream>
 #include <cstdint>
+#include <set>
 
 int p, width, sym, l4h;
 int maxwid, stator;
@@ -22,6 +23,7 @@ int main(int argc, char* argv[]) {
   ix >> p >> width >> sym >> l4h >> maxwid >> stator;
   int FS; ix>>FS; exInitrow = std::vector<uint64_t>(FS);
   for(int i=0;i<FS;i++)ix>>exInitrow[i];
+  ix >> FS;
   filters = std::vector<uint64_t>(FS);
   for(int i=0;i<FS;i++)ix>>filters[i];
   for(int s=0;s<2;s++){ix>>FS;leftborder[s]=std::vector<uint64_t>(FS);
@@ -32,6 +34,7 @@ int main(int argc, char* argv[]) {
     int id, depth; ix >> id >> depth;
     std::vector<uint64_t> rows(2*p); for(auto& s:rows)ix>>s;
     std::vector<uint64_t> resp;
+    std::cerr << id << ' ' << depth << '\n';
     genNextRows(rows, depth, l4h, [&](uint64_t x){ 
       resp.push_back(x);
     });

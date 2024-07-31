@@ -13,7 +13,7 @@ int maxwid, stator;
 
 namespace _searchtree {
 std::mutex searchtree_mutex;
-// state: d - done, q - not done
+// state: d - done, q - not done, 2 - duplicate
 // TODO: for non-ephemeral nodes, include state s - sent to NE node
 struct node { uint64_t row; int depth, shift, parent, contrib; char state; };
 node* tree = new node[16777216];
@@ -78,6 +78,21 @@ std::vector<uint64_t> getState(int onx) {
     mat.push_back(tree[onx].row), onx = tree[onx].parent;
   std::reverse(mat.begin(), mat.end());
   return std::vector<uint64_t>(mat.end() - 2*p, mat.end());
+}
+
+uint64_t calculateHash(int onx) {
+  uint64_t v = 0;
+  for(int i=0; i<2*p; i++) {
+    v = 3 * v + tree[onx].row;
+    onx = tree[onx].parent;
+  }
+  return v;
+}
+
+std::unordered_multimap<uint64_t, int> hasht;
+
+bool checkduplicate(int onx) {
+  // ...
 }
 
 int getWidth(int i) {
@@ -209,7 +224,7 @@ void workunitHandler() {
         //   std::cerr << "preposterous\n";
         //   assert(0);
         // }
-        if(tree[x.id].state == 'd') continue;
+        if(tree[x.id].state == 'd' || tree[x.id].state == '2') continue;
         if(x.state == 'c') {
           tree[x.id].state = 'd';
           if(!contributorIDs.contains(x.contributor)) {
@@ -425,7 +440,7 @@ void adminConsoleHandler() {
       std::vector<int> ongoing(maxdep+1), total(maxdep+1);
       for(int i=0;i<treeSize; i++) {
         total[tree[i].depth]++;
-        if(tree[i].state != 'd') ongoing[tree[i].depth]++;
+        if(tree[i].state != 'd' && tree[i].state != '2') ongoing[tree[i].depth]++;
         else if(i>=2*p) conIdx[tree[i].contrib].first++;
       }
       fx << treeSize << " nodes<br>";

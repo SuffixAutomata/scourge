@@ -84,6 +84,7 @@ void computationManager(mg_mgr* const& mgr, const unsigned long conn) {
   ix >> p >> width >> sym >> l4h >> maxwid >> stator;
   int FS; ix>>FS; exInitrow = std::vector<uint64_t>(FS);
   for(int i=0;i<FS;i++)ix>>exInitrow[i];
+  ix >> FS;
   filters = std::vector<uint64_t>(FS);
   for(int i=0;i<FS;i++)ix>>filters[i];
   for(int s=0;s<2;s++){ix>>FS;leftborder[s]=std::vector<uint64_t>(FS);
