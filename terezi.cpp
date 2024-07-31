@@ -37,29 +37,6 @@ void dumpTree(std::string fn) {
   fx.flush(); fx.close();
 }
 
-void loadTree(std::string fn) {
-  using namespace std;
-  ifstream fx(fn);
-  fx>>p>>width>>sym>>stator>>l4h;
-  int FS; fx>>FS; exInitrow=std::vector<uint64_t>(FS);
-  for(int i=0;i<FS;i++)fx>>exInitrow[i];
-  fx>>FS; filters=std::vector<uint64_t>(FS);
-  for(int i=0;i<FS;i++)fx>>filters[i];
-  for(int pp=0;pp<2;pp++){fx>>FS;leftborder[pp]=std::vector<uint64_t>(FS);
-  for(int t=0;t<FS;t++)fx>>leftborder[pp][t];}
-  fx>>treeSize;
-  for(int i=0;i<treeSize;i++){
-    fx>>tree[i].row>>tree[i].shift>>tree[i].parent>>tree[i].contrib>>tree[i].state;
-    tree[i].depth = 1 + (i ? tree[tree[i].parent].depth : 0);
-  }
-  fx>>FS;
-  contributors=std::vector<std::string>(FS);
-  for(int i=0; i<FS;i++) {
-    fx>>contributors[i];
-    contributorIDs[contributors[i]] = i;
-  }
-}
-
 // void flushTree(node* dest = tree) { assert(0); }
 
 int newNode() {
@@ -92,7 +69,46 @@ uint64_t calculateHash(int onx) {
 std::unordered_multimap<uint64_t, int> hasht;
 
 bool checkduplicate(int onx) {
-  // ...
+  if(onx < 2*p) return 0;
+  uint64_t targHash = calculateHash(onx);
+  auto [st, en] = hasht.equal_range(targHash);
+  bool found = false;
+  std::vector<uint64_t> targState;
+  for(auto it=st; it!=en; it++) {
+    if(tree[it->second].depth != tree[onx].depth) continue;
+    if(!targState.size()) targState = getState(onx);
+    if(getState(it->second) == targState) {
+      found = true;
+      break;
+    }
+  }
+  if(!found) hasht.emplace(targHash, onx);
+  return found;
+}
+
+void loadTree(std::string fn) {
+  using namespace std;
+  ifstream fx(fn);
+  fx>>p>>width>>sym>>stator>>l4h;
+  int FS; fx>>FS; exInitrow=std::vector<uint64_t>(FS);
+  for(int i=0;i<FS;i++)fx>>exInitrow[i];
+  fx>>FS; filters=std::vector<uint64_t>(FS);
+  for(int i=0;i<FS;i++)fx>>filters[i];
+  for(int pp=0;pp<2;pp++){fx>>FS;leftborder[pp]=std::vector<uint64_t>(FS);
+  for(int t=0;t<FS;t++)fx>>leftborder[pp][t];}
+  fx>>treeSize;
+  for(int i=0;i<treeSize;i++){
+    fx>>tree[i].row>>tree[i].shift>>tree[i].parent>>tree[i].contrib>>tree[i].state;
+    tree[i].depth = 1 + (i ? tree[tree[i].parent].depth : 0);
+    if(i >= 2*p && (tree[tree[i].parent].state == '2' || checkduplicate(i)))
+      tree[i].state = '2';
+  }
+  fx>>FS;
+  contributors=std::vector<std::string>(FS);
+  for(int i=0; i<FS;i++) {
+    fx>>contributors[i];
+    contributorIDs[contributors[i]] = i;
+  }
 }
 
 int getWidth(int i) {
@@ -236,7 +252,10 @@ void workunitHandler() {
             // std::cerr << "requested newNode with "<< to_process.size() << ' ' << x.id << ' ' << x.cid << ' ' <<r<<' ' <<x.children.size()<<std::endl;
             int onx = newNode();
             tree[onx] = {r, tree[x.id].depth+1, 0, x.id, 0, 'q'};
-            addPendingOutbound.push_back(genPOM(onx));
+            if(checkduplicate(onx))
+              tree[onx].state = '2';
+            else
+              addPendingOutbound.push_back(genPOM(onx));
             emit(onx, Compl3t34bl3(getState(onx), tree[onx].depth, tree[onx].depth%p));
           }
         } else if(x.state == 'u') {
@@ -431,11 +450,12 @@ void adminConsoleHandler() {
       woker(mgr, nx.conn_id, {1, "crunching tree stats..."});
       const std::lock_guard<std::mutex> lock(searchtree_mutex);
       std::stringstream fx;
-      int maxdep = 0;
+      int maxdep = 0, dup = 0;
       std::vector<std::pair<int, std::string>> conIdx;
       for(auto s:contributors) conIdx.push_back({0, s});
       for(int i=0; i<treeSize; i++) {
         maxdep = std::max(maxdep, tree[i].depth);
+        dup += (tree[i].state == '2');
       }
       std::vector<int> ongoing(maxdep+1), total(maxdep+1);
       for(int i=0;i<treeSize; i++) {
@@ -443,7 +463,7 @@ void adminConsoleHandler() {
         if(tree[i].state != 'd' && tree[i].state != '2') ongoing[tree[i].depth]++;
         else if(i>=2*p) conIdx[tree[i].contrib].first++;
       }
-      fx << treeSize << " nodes<br>";
+      fx << treeSize << " nodes, " << dup << " duplicates<br>";
       fx << "max depth "<<maxdep <<"<br>";
       fx << "profile";
       for(int i=0; i<=maxdep; i++){
