@@ -325,6 +325,9 @@ void adminConsoleHandler() {
     }
     mg_mgr* mgr;
     { const std::lock_guard<std::mutex> lock(adminConnections_mutex);
+      auto it =  adminConnections.find(nx.conn_id);
+      if(it == adminConnections.end())
+        continue; // bizarre
       mgr = adminConnections[nx.conn_id];
     }
     std::stringstream s(nx.message);
@@ -498,6 +501,22 @@ struct workerhandlerMessage {
 };
 
 moodycamel::BlockingConcurrentQueue<workerhandlerMessage> workerHandler_queue;
+void postWorkerDisconnect(unsigned long conn) {
+  for(int i:workerConnections[conn].attachedWorkunits) // this is done with a lock on it anyways
+    pendingInbound.enqueue({i, conn, 'u', "", {}});
+}
+void haltWorkerConnection(unsigned long conn) {
+  // **ALL CLOSING WORKER CONNECTIONS, WHETHER BY FAILING A PING OR BY DISCONNECTING AND TRIGGERING WEBSOCKET CONTROL, SHALL PASS THROUGH THIS FUNCTION.**
+  MG_INFO(("\033[1;1;31m## worker connection %d close handler triggered ## \033[0m", conn));
+  const std::lock_guard<std::mutex> lock(workerConnections_mutex);
+  auto it = workerConnections.find(conn);
+  if(it != workerConnections.end()) {
+    postWorkerDisconnect(conn);
+    workerConnections.erase(it);
+    workerHandler_queue.enqueue({4, conn, ""});
+  } else
+    MG_INFO(("tried to release already released worker %d", conn));
+}
 int workerHandler_running = 0;
 // note workerHandler can **NOT** block thread during runs because it has to deal with TEN THOUSAND CONNECTIONS
 // role of worker handler is just to ping
@@ -506,32 +525,20 @@ void workerHandler() {
   MG_INFO(("Worker handler started running"));
   workerhandlerMessage nx;
   std::set<unsigned long> pingUnresponded;
-  auto postWorkerDisconnect = [&](unsigned long conn) {
-    for(int i:workerConnections[conn].attachedWorkunits) // this is done with a lock on it anyways
-      pendingInbound.enqueue({i, conn, 'u', "", {}});
-  };
   uint64_t lastping = 0;
   while (workerHandler_queue.wait_dequeue(nx), nx.flag != 2) {
     // MG_INFO(("handling %d - %s", nx.conn_id, nx.message.c_str()));
     if(nx.flag == 4) {
-      // **ALL CLOSING WORKER CONNECTIONS, WHETHER BY FAILING A PING OR BY DISCONNECTING AND TRIGGERING WEBSOCKET CONTROL, SHALL PASS THROUGH THIS FUNCTION.**
-      MG_INFO(("\033[1;1;31m## worker connection %d close handler triggered ## \033[0m", nx.conn_id));
-      const std::lock_guard<std::mutex> lock(workerConnections_mutex);
-      auto it = workerConnections.find(nx.conn_id);
-      if(it != workerConnections.end()) {
-        postWorkerDisconnect(nx.conn_id);
-        workerConnections.erase(it);
-        auto it2 = pingUnresponded.find(nx.conn_id);
-        if(it2 != pingUnresponded.end())
-          pingUnresponded.erase(it2);
-      } else
-        MG_INFO(("tried to release already released worker %d", nx.conn_id));
+      auto it2 = pingUnresponded.find(nx.conn_id);
+      if(it2 != pingUnresponded.end())
+        pingUnresponded.erase(it2);
       continue;
     }
     if(nx.flag == 8) {
       // disconnect hosts that did not respond to last ping...
-      for(auto conn : pingUnresponded)
-        workerHandler_queue.enqueue({4, conn, ""});
+      for(auto conn : pingUnresponded) 
+        haltWorkerConnection(conn);
+        // workerHandler_queue.enqueue({4, conn, ""});
       pingUnresponded.clear();
       const std::lock_guard<std::mutex> lock(workerConnections_mutex);
       for(auto& [conn, m] : workerConnections)
@@ -697,8 +704,10 @@ void fn(mg_connection* c, int ev, void* ev_data) {
     uint32_t s = (wm->flags) & 0xF0;
     MG_INFO(("\033[1;1;31mwebsocket control triggered, %.*s, %x \033[0m", wm->data.len, wm->data.buf, s));
     if(s == 0x80) {
-      if(c->data[1] == 'W')
+      if(c->data[1] == 'W') {
+        haltWorkerConnection(c->id);
         workerHandler_queue.enqueue({4, c->id, ""});
+      }
       else if(c->data[1] == 'A')
         adminConsoleHandler_queue.enqueue({4, c->id, ""});
     }
