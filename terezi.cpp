@@ -6,7 +6,8 @@
 
 #include "cqueue/bcq.h"
 
-const int worker_ping_duration = 60000; // ms
+const int worker_timeout_duration = 20000; // ms
+const int worker_ping_rate = 10000; // ms
 
 int p, width, sym, l4h;
 int maxwid, stator;
@@ -120,7 +121,7 @@ int getWidth(int i) {
 
 #include "logic.h"
 
-std::string banner = "Welcome to Scourge v2.1\n";
+std::string banner = "Welcome to Scourge v2.2\n";
 std::string longgestPartial;
 std::string oscillatorComplete;
 
@@ -500,16 +501,13 @@ struct workerhandlerMessage {
 };
 
 moodycamel::BlockingConcurrentQueue<workerhandlerMessage> workerHandler_queue;
-const int worker_timeout = 60*1000;
 void postWorkerDisconnect(unsigned long conn) {
   for(int i:workerConnections[conn].attachedWorkunits) // this is done with a lock on it anyways
     pendingInbound.enqueue({i, conn, 'u', "", {}});
 }
-int workerHandler_running = 0;
 // note workerHandler can **NOT** block thread during runs because it has to deal with TEN THOUSAND CONNECTIONS
 // role of worker handler is just to ping
 void workerHandler() {
-  assert(workerHandler_running == 1);
   MG_INFO(("Worker handler started running"));
   workerhandlerMessage nx;
   // Every 30s, go through all of the worker connections; kick the ones that haven't sent anything in 60s
@@ -525,8 +523,10 @@ void workerHandler() {
       const std::lock_guard<std::mutex> lock(workerConnections_mutex);
       std::vector<unsigned long> toKick;
       for(auto& [conn, stat] : workerConnections) 
-        if(stat.contime && stat.lastmsg + worker_timeout < nx.mil)
+        if(stat.contime && stat.lastmsg + worker_timeout_duration < nx.mil) {
+          std::cerr << "kicked " << conn << '\n';
           toKick.push_back(conn);
+        }
       for(auto conn : toKick) {
         auto it = workerConnections.find(conn);
         if(it != workerConnections.end()) {
@@ -543,8 +543,9 @@ void workerHandler() {
       postWorkerDisconnect(conn);
     workerConnections.clear();
   }
-  workerHandler_running = false;
 }
+
+std::thread workerhandlerthread(workerHandler);
 
 mg_str ca_cert, server_cert, server_key;
 
@@ -711,10 +712,9 @@ void fn(mg_connection* c, int ev, void* ev_data) {
     delete data;
   } else if (ev == MG_EV_POLL) {
     static uint64_t lastping = 0, current = 0;
-    if((current = mg_millis()) > lastping + worker_ping_duration) {
+    if((current = mg_millis()) > lastping + worker_ping_rate) {
       lastping = current;
-      if(workerHandler_running)
-        workerHandler_queue.enqueue({1, 0, lastping});
+      workerHandler_queue.enqueue({1, 0, lastping});
     }
   }
 }
