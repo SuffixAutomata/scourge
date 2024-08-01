@@ -6,7 +6,7 @@
 
 #include "cqueue/bcq.h"
 
-int worker_ping_duration = 8000; // ms
+const int worker_ping_duration = 60000; // ms
 
 int p, width, sym, l4h;
 int maxwid, stator;
@@ -213,8 +213,8 @@ void emit(int state, bool d = true){
 }
 
 struct workerInfo {
-  mg_mgr* mgr;
   uint64_t contime, uptime, latency;
+  uint64_t lastmsg;
   std::set<int> attachedWorkunits;
 };
 std::map<unsigned long, workerInfo> workerConnections;
@@ -494,28 +494,16 @@ void adminConsoleHandler() {
 }
 
 struct workerhandlerMessage {
-  int flag = 0; // 4 - connection closed, 8 - ping time
-  unsigned long conn_id;  // Parent connection ID
-  std::string message;
-  uint64_t ms = 0;
+  int flag = 0; // 1 - loop over everyone
+  unsigned long conn;
+  unsigned long mil;
 };
 
 moodycamel::BlockingConcurrentQueue<workerhandlerMessage> workerHandler_queue;
+const int worker_timeout = 60*1000;
 void postWorkerDisconnect(unsigned long conn) {
   for(int i:workerConnections[conn].attachedWorkunits) // this is done with a lock on it anyways
     pendingInbound.enqueue({i, conn, 'u', "", {}});
-}
-void haltWorkerConnection(unsigned long conn) {
-  // **ALL CLOSING WORKER CONNECTIONS, WHETHER BY FAILING A PING OR BY DISCONNECTING AND TRIGGERING WEBSOCKET CONTROL, SHALL PASS THROUGH THIS FUNCTION.**
-  MG_INFO(("\033[1;1;31m## worker connection %d close handler triggered ## \033[0m", conn));
-  const std::lock_guard<std::mutex> lock(workerConnections_mutex);
-  auto it = workerConnections.find(conn);
-  if(it != workerConnections.end()) {
-    postWorkerDisconnect(conn);
-    workerConnections.erase(it);
-    workerHandler_queue.enqueue({4, conn, ""});
-  } else
-    MG_INFO(("tried to release already released worker %d", conn));
 }
 int workerHandler_running = 0;
 // note workerHandler can **NOT** block thread during runs because it has to deal with TEN THOUSAND CONNECTIONS
@@ -524,44 +512,34 @@ void workerHandler() {
   assert(workerHandler_running == 1);
   MG_INFO(("Worker handler started running"));
   workerhandlerMessage nx;
-  std::set<unsigned long> pingUnresponded;
-  uint64_t lastping = 0;
+  // Every 30s, go through all of the worker connections; kick the ones that haven't sent anything in 60s
   while (workerHandler_queue.wait_dequeue(nx), nx.flag != 2) {
-    // MG_INFO(("handling %d - %s", nx.conn_id, nx.message.c_str()));
-    if(nx.flag == 4) {
-      auto it2 = pingUnresponded.find(nx.conn_id);
-      if(it2 != pingUnresponded.end())
-        pingUnresponded.erase(it2);
-      continue;
-    }
-    if(nx.flag == 8) {
-      // disconnect hosts that did not respond to last ping...
-      for(auto conn : pingUnresponded) 
-        haltWorkerConnection(conn);
-        // workerHandler_queue.enqueue({4, conn, ""});
-      pingUnresponded.clear();
+    if(nx.flag == 0) {
       const std::lock_guard<std::mutex> lock(workerConnections_mutex);
-      for(auto& [conn, m] : workerConnections)
-        woker(m.mgr, conn, {1, "ping"}), pingUnresponded.insert(conn);
-      lastping = nx.ms;
-      continue;
+      auto& pp = workerConnections[nx.conn];
+      if(!pp.contime) pp.contime = nx.mil;
+      pp.lastmsg = nx.mil;
+      pp.uptime = nx.mil - pp.contime;
     }
-    std::stringstream s(nx.message);
-    std::string com; s>>com;
-    if(com == "pong") {
-      auto it = pingUnresponded.find(nx.conn_id);
-      if(it != pingUnresponded.end())
-        pingUnresponded.erase(it);
-      { const std::lock_guard<std::mutex> lock(workerConnections_mutex); 
-        auto& m = workerConnections[nx.conn_id];
-        m.latency = nx.ms - lastping;
-        m.uptime = nx.ms - m.contime;
+    if(nx.flag == 1) {
+      const std::lock_guard<std::mutex> lock(workerConnections_mutex);
+      std::vector<unsigned long> toKick;
+      for(auto& [conn, stat] : workerConnections) 
+        if(stat.contime && stat.lastmsg + worker_timeout < nx.mil)
+          toKick.push_back(conn);
+      for(auto conn : toKick) {
+        auto it = workerConnections.find(conn);
+        if(it != workerConnections.end()) {
+          postWorkerDisconnect(conn);
+          workerConnections.erase(it);
+        }
       }
+      continue;
     }
   }
   // halt all connections
   { const std::lock_guard<std::mutex> lock(workerConnections_mutex);
-    for(auto & [conn, mgr] : workerConnections)
+    for(auto & [conn, _] : workerConnections)
       postWorkerDisconnect(conn);
     workerConnections.clear();
   }
@@ -607,21 +585,6 @@ void fn(mg_connection* c, int ev, void* ev_data) {
         sv = mg_str(oscillatorComplete.c_str());
         mg_ws_send(c, sv.buf, sv.len, WEBSOCKET_OP_TEXT);
       }
-    }
-    /* connected units end*/
-    else if (mg_match(hm->uri, mg_str("/worker-websocket"), NULL)) {
-      mg_ws_upgrade(c, hm, NULL);
-      c->data[0] = 'W'; // websocket
-      c->data[1] = 'W'; // worker
-      auto sv = mg_str(std::to_string(c->id).c_str());
-      mg_ws_send(c, sv.buf, sv.len, WEBSOCKET_OP_TEXT);
-      { const std::lock_guard<std::mutex> lock(workerConnections_mutex);
-        workerConnections[c->id] = {c->mgr, mg_millis(), 0, 0, {}};
-      }
-      if(workerHandler_running == 0) {
-        workerHandler_running++;
-        std::thread t(workerHandler); t.detach();
-      }
     } else if(mg_match(hm->uri, mg_str("/getconfig"), NULL)) {
       // GET
       // v2: merge with /getwork
@@ -634,6 +597,9 @@ void fn(mg_connection* c, int ev, void* ev_data) {
         for(auto i:leftborder[s]) res<<' '<<i;
       }
       res<<'\n';
+      static unsigned long cid = 0;
+      cid++;
+      res<<cid<<'\n';
       mg_http_reply(c, 200, "Content-Type: text/raw\n", "%s", res.str().c_str());
     } 
     else if(mg_match(hm->uri, mg_str("/getwork"), NULL)) {
@@ -666,6 +632,7 @@ void fn(mg_connection* c, int ev, void* ev_data) {
           res << '\n';
         }
       }
+      workerHandler_queue.enqueue({0, wsid, mg_millis()});
       if(co.fail())
         mg_http_reply(c, 200, "Content-Type: text/raw\n", "-1");
       else
@@ -690,6 +657,7 @@ void fn(mg_connection* c, int ev, void* ev_data) {
           pendingInbound.enqueue({id, wsid, 'c', cid, rows});
         }
       }
+      workerHandler_queue.enqueue({0, wsid, mg_millis()});
       if(co.fail()) {
         std::cerr << "returnwork failed: " << _mg_str_to_stdstring(hm->body) << std::endl;
         mg_http_reply(c, 200, "Content-Type: text/raw\n", "FAIL");
@@ -711,18 +679,20 @@ void fn(mg_connection* c, int ev, void* ev_data) {
     uint32_t s = (wm->flags) & 0xF0;
     MG_INFO(("\033[1;1;31mwebsocket control triggered, %.*s, %x \033[0m", wm->data.len, wm->data.buf, s));
     if(s == 0x80) {
-      if(c->data[1] == 'W') {
-        haltWorkerConnection(c->id);
-        workerHandler_queue.enqueue({4, c->id, ""});
-      }
-      else if(c->data[1] == 'A')
+      // if(c->data[1] == 'W') {
+      //   haltWorkerConnection(c->id);
+      //   workerHandler_queue.enqueue({4, c->id, ""});
+      // }
+      // else 
+      if(c->data[1] == 'A')
         adminConsoleHandler_queue.enqueue({4, c->id, ""});
     }
   } else if(ev == MG_EV_WS_MSG) {
     mg_ws_message* wm = (mg_ws_message*) ev_data;
-    if(c->data[1] == 'W') {
-      workerHandler_queue.enqueue({0, c->id, _mg_str_to_stdstring(wm->data), mg_millis()});
-    } else if(c->data[1] == 'A') {
+    // if(c->data[1] == 'W') {
+    //   workerHandler_queue.enqueue({0, c->id, _mg_str_to_stdstring(wm->data), mg_millis()});
+    // } else 
+    if(c->data[1] == 'A') {
       adminConsoleHandler_queue.enqueue({0, c->id, _mg_str_to_stdstring(wm->data)});
     }
   } else if (ev == MG_EV_WAKEUP) {
@@ -744,7 +714,7 @@ void fn(mg_connection* c, int ev, void* ev_data) {
     if((current = mg_millis()) > lastping + worker_ping_duration) {
       lastping = current;
       if(workerHandler_running)
-        workerHandler_queue.enqueue({8, 0, "", lastping});
+        workerHandler_queue.enqueue({1, 0, lastping});
     }
   }
 }
