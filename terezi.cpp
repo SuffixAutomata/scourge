@@ -8,7 +8,7 @@
 
 const int worker_timeout_duration = 20000; // ms
 const int worker_ping_rate = 10000; // ms
-const int maxProcessedWUperSec = 5000;
+const int maxProcessedWUperSec = 1000000;
 
 int p, width, sym, l4h;
 int maxwid, stator;
@@ -506,8 +506,6 @@ void postWorkerDisconnect(unsigned long conn) {
   for(int i:workerConnections[conn].attachedWorkunits) // this is done with a lock on it anyways
     pendingInbound.enqueue({i, conn, 'u', "", {}});
 }
-// note workerHandler can **NOT** block thread during runs because it has to deal with TEN THOUSAND CONNECTIONS
-// role of worker handler is just to ping
 void workerHandler() {
   MG_INFO(("Worker handler started running"));
   workerhandlerMessage nx;
