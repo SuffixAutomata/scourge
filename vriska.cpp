@@ -181,9 +181,11 @@ int main(int argc, char* argv[]) {
   };
   handle();
   std::vector<B2Aunit> nxb(desired);
+  int idx = 0;
   while(1) {
     int cnt = B2A.try_dequeue_bulk(nxb.begin(), desired);
-    if(cnt != 0) {
+    if(cnt != 0 || idx == 8) {
+      idx = 0;
       std::stringstream x; x << cnt << ' ' << cid<< '\n';;
       for(int i=0; i<cnt; i++) {
         auto& nx = nxb[i];
@@ -192,7 +194,7 @@ int main(int argc, char* argv[]) {
         x<<contributorID<< ' ' << nx.nextrows.size(); for(auto t:nx.nextrows)x<<' '<<t;x<<'\n';
       }
       assert(woke_and_wait({2, x.str()}) == "OK");
-    }
+    } else if(cnt == 0) idx++;
     if(mg_millis() > (timeout)) break;
     std::this_thread::sleep_for(std::chrono::milliseconds(3000));
     handle();

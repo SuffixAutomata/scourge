@@ -8,6 +8,7 @@
 
 const int worker_timeout_duration = 20000; // ms
 const int worker_ping_rate = 10000; // ms
+const int maxProcessedWUperSec = 5000;
 
 int p, width, sym, l4h;
 int maxwid, stator;
@@ -225,14 +226,14 @@ void workunitHandler() {
   // every T seconds clear out B2A and regenerate A2B node
   std::string autosave1 = "autosave-odd.txt", autosave2 = "autosave-even.txt";
   pendingInboundMessage nx;
-  int idx = 0, maxcnt = 1000;
+  int idx = 0;
   while(1) {
     std::this_thread::sleep_for(1 * std::chrono::seconds(1));
     // process pendingInbound but process at most 1000 to ensure that pendingOutbound can be refreshed
     // only acquire the lock for a shot amount of time
     std::vector<pendingOutboundMessage> addPendingOutbound;
-    std::vector<pendingInboundMessage> to_process(1000);
-    to_process.resize(pendingInbound.try_dequeue_bulk(to_process.begin(), maxcnt));
+    std::vector<pendingInboundMessage> to_process(maxProcessedWUperSec);
+    to_process.resize(pendingInbound.try_dequeue_bulk(to_process.begin(), maxProcessedWUperSec));
     { const std::lock_guard<std::mutex> lock(searchtree_mutex);
       const std::lock_guard<std::mutex> lock2(workerConnections_mutex);
       for(auto& x:to_process) {
