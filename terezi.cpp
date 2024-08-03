@@ -9,6 +9,11 @@
 const int worker_timeout_duration = 20000; // ms
 const int worker_ping_rate = 10000; // ms
 const int maxProcessedWUperSec = 1000000;
+#ifdef LARGETREE
+const int treeAlloc = 536870912;
+#else
+const int treeAlloc = 16777216;
+#endif
 
 int p, width, sym, l4h;
 int maxwid, stator;
@@ -17,9 +22,10 @@ namespace _searchtree {
 std::mutex searchtree_mutex;
 // state: d - done, q - not done, 2 - duplicate
 // TODO: for non-ephemeral nodes, include state s - sent to NE node
-struct node { uint64_t row; int depth, shift, parent, contrib; char state; };
-node* tree = new node[16777216];
-int treeSize = 0, treeAlloc = 16777216;
+struct node { uint64_t row; short depth; int8_t shift; int parent; int8_t contrib; char state; };
+const int s = sizeof(node);
+node* tree = new node[treeAlloc];
+int treeSize = 0;
 std::vector<uint64_t> exInitrow;
 std::vector<uint64_t> filters;
 std::vector<uint64_t> leftborder[2];
@@ -33,7 +39,7 @@ void dumpTree(std::string fn) {
   for(int t=0;t<2;t++){ fx<<leftborder[t].size(); for(auto s:leftborder[t]){fx<<' '<<s;}fx<<'\n';}
   fx<<treeSize<<'\n';
   for(int i=0;i<treeSize;i++)
-    fx<<tree[i].row<<' '<<tree[i].shift<<' '<<tree[i].parent<<' '<<tree[i].contrib<<' '<<tree[i].state<<'\n';
+    fx<<tree[i].row<<' '<<(int)(tree[i].shift)<<' '<<tree[i].parent<<' '<<(int)(tree[i].contrib)<<' '<<tree[i].state<<'\n';
   fx<<contributorIDs.size()<<'\n';
   for(auto s:contributors) fx<<s<<'\n';
   fx.flush(); fx.close();
@@ -100,7 +106,10 @@ void loadTree(std::string fn) {
   for(int t=0;t<FS;t++)fx>>leftborder[pp][t];}
   fx>>treeSize;
   for(int i=0;i<treeSize;i++){
-    fx>>tree[i].row>>tree[i].shift>>tree[i].parent>>tree[i].contrib>>tree[i].state;
+    int sh, con;
+    fx>>tree[i].row>>sh>>tree[i].parent>>con>>tree[i].state;
+    tree[i].shift=sh;
+    con=tree[i].contrib;
     tree[i].depth = 1 + (i ? tree[tree[i].parent].depth : 0);
     if(i >= 2*p && (tree[tree[i].parent].state == '2' || checkduplicate(i)))
       tree[i].state = '2';
@@ -253,7 +262,7 @@ void workunitHandler() {
           for(uint64_t r:x.children) {
             // std::cerr << "requested newNode with "<< to_process.size() << ' ' << x.id << ' ' << x.cid << ' ' <<r<<' ' <<x.children.size()<<std::endl;
             int onx = newNode();
-            tree[onx] = {r, tree[x.id].depth+1, 0, x.id, 0, 'q'};
+            tree[onx] = {r, short(tree[x.id].depth+1), 0, x.id, 0, 'q'};
             if(checkduplicate(onx))
               tree[onx].state = '2';
             else
@@ -378,7 +387,7 @@ void adminConsoleHandler() {
           if (row[j] == 'o')
             x |= (1ull << j);
 // struct node { uint64_t row; int depth, shift, parent, contrib; char state; };
-        tree[newNode()]={x, i+1, 0, i-1, 0, 'd'};
+        tree[newNode()]={x, short(i+1), 0, i-1, 0, 'd'};
       } s>>options;
       if (options[0] == 'y' || options[0] == 'Y') {
         int filterrows; s>>filterrows;
@@ -459,7 +468,7 @@ void adminConsoleHandler() {
       std::vector<std::pair<int, std::string>> conIdx;
       for(auto s:contributors) conIdx.push_back({0, s});
       for(int i=0; i<treeSize; i++) {
-        maxdep = std::max(maxdep, tree[i].depth);
+        maxdep = std::max(maxdep, (int)tree[i].depth);
         dup += (tree[i].state == '2');
       }
       std::vector<int> ongoing(maxdep+1), total(maxdep+1);
