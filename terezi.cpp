@@ -299,7 +299,7 @@ void workunitHandler() {
       res << std::put_time(std::gmtime(&now_tt), "%c %Z") << " conn#: " << workerConnections.size();
       res << " q#: "<<pendingOutbound.size_approx() << " pending#: "<<pendingInbound.size_approx();
       adminConsoleHandler_queue.enqueue({1, 0, res.str()});
-      if(idx % 1024 == 0) {
+      if(idx % 4096 == 0) {
         dumpTree(autosave1);
         swap(autosave1, autosave2);
         std::stringstream res2; res2 << "autosaved to "<<autosave1;
