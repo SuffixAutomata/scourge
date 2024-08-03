@@ -109,7 +109,7 @@ void loadTree(std::string fn) {
     int sh, con;
     fx>>tree[i].row>>sh>>tree[i].parent>>con>>tree[i].state;
     tree[i].shift=sh;
-    con=tree[i].contrib;
+    tree[i].contrib=con;
     tree[i].depth = 1 + (i ? tree[tree[i].parent].depth : 0);
     if(i >= 2*p && (tree[tree[i].parent].state == '2' || checkduplicate(i)))
       tree[i].state = '2';
@@ -301,8 +301,8 @@ void workunitHandler() {
       adminConsoleHandler_queue.enqueue({1, 0, res.str()});
       if(idx % 4096 == 0) {
         dumpTree(autosave1);
-        swap(autosave1, autosave2);
         std::stringstream res2; res2 << "autosaved to "<<autosave1;
+        swap(autosave1, autosave2);
         adminConsoleHandler_queue.enqueue({1, 0, res2.str()});
       }
     }
