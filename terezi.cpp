@@ -15,144 +15,32 @@ const int treeAlloc = 536870912;
 const int treeAlloc = 16777216;
 #endif
 
-int p, width, sym, l4h;
-int maxwid, stator;
+/* parameters TODO */
 
 namespace _searchtree {
-std::mutex searchtree_mutex;
-// state: d - done, q - not done, 2 - duplicate
-// TODO: for non-ephemeral nodes, include state s - sent to NE node
-struct node { uint64_t row; short depth; int8_t shift; int parent; int8_t contrib; char state; };
-const int s = sizeof(node);
-node* tree = new node[treeAlloc];
-int treeSize = 0;
-std::vector<uint64_t> exInitrow;
-std::vector<uint64_t> filters;
-std::vector<uint64_t> leftborder[2];
-std::vector<std::string> contributors; std::map<std::string, int> contributorIDs;
-
-void dumpTree(std::string fn) {
-  std::ofstream fx(fn);
-  fx << p << ' ' << width << ' ' << sym << ' ' << stator << ' ' << l4h << '\n';
-  fx << exInitrow.size(); for(auto s:exInitrow){fx << ' ' << s;} fx << '\n';
-  fx << filters.size(); for(auto s:filters){fx << ' ' << s;} fx << '\n';
-  for(int t=0;t<2;t++){ fx<<leftborder[t].size(); for(auto s:leftborder[t]){fx<<' '<<s;}fx<<'\n';}
-  fx<<treeSize<<'\n';
-  for(int i=0;i<treeSize;i++)
-    fx<<tree[i].row<<' '<<(int)(tree[i].shift)<<' '<<tree[i].parent<<' '<<(int)(tree[i].contrib)<<' '<<tree[i].state<<'\n';
-  fx<<contributorIDs.size()<<'\n';
-  for(auto s:contributors) fx<<s<<'\n';
-  fx.flush(); fx.close();
-}
-
-// void flushTree(node* dest = tree) { assert(0); }
-
-int newNode() {
-  assert(treeSize < treeAlloc);
-  // if(treeSize == treeAlloc)
-  //   treeAlloc *= 2, flushTree(new node[treeAlloc]);
-  // if((treeSize - time(0)) % 8192 == 0) flushTree();
-  tree[treeSize] = {0,0,0,0,0,'0'};
-  // std::cerr << "called newnode " << treeSize << '\n';
-  return treeSize++;
-}
-
-std::vector<uint64_t> getState(int onx) {
-  std::vector<uint64_t> mat;
-  while(onx != -1)
-    mat.push_back(tree[onx].row), onx = tree[onx].parent;
-  std::reverse(mat.begin(), mat.end());
-  return std::vector<uint64_t>(mat.end() - 2*p, mat.end());
-}
-
-uint64_t calculateHash(int onx) {
-  uint64_t v = 0;
-  for(int i=0; i<2*p; i++) {
-    v = 3 * v + tree[onx].row;
-    onx = tree[onx].parent;
-  }
-  return v;
-}
-
-std::unordered_multimap<uint64_t, int> hasht;
-
-bool checkduplicate(int onx) {
-  if(onx < 2*p) return 0;
-  uint64_t targHash = calculateHash(onx);
-  auto [st, en] = hasht.equal_range(targHash);
-  bool found = false;
-  std::vector<uint64_t> targState;
-  for(auto it=st; it!=en; it++) {
-    if(tree[it->second].depth != tree[onx].depth) continue;
-    if(!targState.size()) targState = getState(onx);
-    if(getState(it->second) == targState) {
-      found = true;
-      break;
-    }
-  }
-  if(!found) hasht.emplace(targHash, onx);
-  return found;
-}
-
-void loadTree(std::string fn) {
-  using namespace std;
-  ifstream fx(fn);
-  fx>>p>>width>>sym>>stator>>l4h;
-  int FS; fx>>FS; exInitrow=std::vector<uint64_t>(FS);
-  for(int i=0;i<FS;i++)fx>>exInitrow[i];
-  fx>>FS; filters=std::vector<uint64_t>(FS);
-  for(int i=0;i<FS;i++)fx>>filters[i];
-  for(int pp=0;pp<2;pp++){fx>>FS;leftborder[pp]=std::vector<uint64_t>(FS);
-  for(int t=0;t<FS;t++)fx>>leftborder[pp][t];}
-  fx>>treeSize;
-  for(int i=0;i<treeSize;i++){
-    int sh, con;
-    fx>>tree[i].row>>sh>>tree[i].parent>>con>>tree[i].state;
-    tree[i].shift=sh;
-    tree[i].contrib=con;
-    tree[i].depth = 1 + (i ? tree[tree[i].parent].depth : 0);
-    if(i >= 2*p && (tree[tree[i].parent].state == '2' || checkduplicate(i)))
-      tree[i].state = '2';
-  }
-  fx>>FS;
-  contributors=std::vector<std::string>(FS);
-  for(int i=0; i<FS;i++) {
-    fx>>contributors[i];
-    contributorIDs[contributors[i]] = i;
-  }
-}
-
-int getWidth(int i) {
-  uint64_t bito = 0;
-  for(uint64_t x:getState(i)){ bito |= x; }
-  return 64-__builtin_clzll(bito)-__builtin_ctzll(bito);
-}
+/* TODO */
 }; using namespace _searchtree;
 
-#include "logic.h"
-
-std::string banner = "Welcome to Scourge v2.2\n";
+std::string banner = "Welcome to Scourge v2.3\n";
 std::string longgestPartial;
 std::string oscillatorComplete;
 
-// std::mutex pendingOutbound_mutex;
-// std::queue<int> pendingOutbound;
 // ints store these and lock the tree instead because all the nodes will be queued here
 // TODO: refactor into pendingoutbound containing only a portion of the unprocessed nodes, will make getwork unlocking
 struct pendingOutboundMessage {
-  int id, depth;
-  std::vector<uint64_t> rows;
+  // int id, depth;
+  // std::vector<uint64_t> rows;
 };
 pendingOutboundMessage genPOM(int onx) {
-  return pendingOutboundMessage{onx, tree[onx].depth, getState(onx)};
+  // return pendingOutboundMessage{onx, tree[onx].depth, getState(onx)};
 };
 moodycamel::BlockingConcurrentQueue<pendingOutboundMessage> pendingOutbound;
 
 struct pendingInboundMessage {
-  int id; unsigned long cid;
-  char state; // u - uncomplete, c - complete, s - sent
-  std::string contributor;
-  std::vector<uint64_t> children;
+  // int id; unsigned long cid;
+  // char state; // u - uncomplete, c - complete, s - sent
+  // std::string contributor;
+  // std::vector<uint64_t> children;
 };
 moodycamel::BlockingConcurrentQueue<pendingInboundMessage> pendingInbound;
 
@@ -182,45 +70,7 @@ void woker(mg_mgr* const& mgr, const unsigned long conn, const wakeupCall& s) {
 }
 
 void emit(int state, bool d = true){
-  static int bdep = 0;
-  std::stringstream fxx;
-  using namespace std;
-  vector<uint64_t> mat;
-  while(state != -1)
-    mat.push_back(tree[state].row), state = tree[state].parent;
-  reverse(mat.begin(), mat.end());
-  if(!d) {
-    if(((int)(mat.size())) <= bdep) return;
-    bdep = mat.size();
-  }else
-    fxx<<"<br>[[OSC1LL4TOR COMPL3T3!!!]]<br>"<<endl;
-  std::string rle;
-  int cnt = 0, cur = 0;
-  auto f = [&](char x) {
-    if(x != cur) {
-      if(cnt >= 2) rle += to_string(cnt);
-      if(cnt >= 1) rle += (char)cur;
-      cnt = 0, cur = x;
-    }
-    cnt++;
-  };
-  for(int r=0; r*p<((int)(mat.size())); r++){
-    if(r) f('$');
-    for(int x=r*p; x<((int)(mat.size())) && x<(r+1)*p; x++){
-      for(int j=0;j<width;j++) f("bo"[!!(mat[x]&(1ull<<j))]);
-      f('b');f('b');f('b');
-    }
-  }
-  f('!'); 
-  fxx << "<pre style='white-space: pre-wrap; word-break:break-all'><code>";
-  fxx << "x = 0, y = 0, rule = B3/S23\n" + rle + "!</code></pre>" << endl;
-  if(d) {
-    oscillatorComplete += fxx.str();
-    std::ofstream fx("osc-complete");
-    fx<<oscillatorComplete<<std::endl; fx.flush(); fx.close();
-  }
-  else longgestPartial = fxx.str();
-  adminConsoleHandler_queue.enqueue({1, 0, fxx.str()});
+/* TODO */
 }
 
 struct workerInfo {
@@ -243,47 +93,42 @@ void workunitHandler() {
     std::vector<pendingOutboundMessage> addPendingOutbound;
     std::vector<pendingInboundMessage> to_process(maxProcessedWUperSec);
     to_process.resize(pendingInbound.try_dequeue_bulk(to_process.begin(), maxProcessedWUperSec));
-    { const std::lock_guard<std::mutex> lock(searchtree_mutex);
+    {  // const std::lock_guard<std::mutex> lock(searchtree_mutex);
       const std::lock_guard<std::mutex> lock2(workerConnections_mutex);
       for(auto& x:to_process) {
-        // std::cerr << x.id << ' ' <<x.cid << ' ' <<x.state << ' ' <<x.children.size() << '\n';
-        // if(x.children.size() > 1000) {
-        //   std::cerr << "preposterous\n";
-        //   assert(0);
+        // if(tree[x.id].state == 'd' || tree[x.id].state == '2') continue;
+        // if(x.state == 'c') {
+        //   tree[x.id].state = 'd';
+        //   if(!contributorIDs.contains(x.contributor)) {
+        //     contributorIDs[x.contributor] = contributors.size();
+        //     contributors.push_back(x.contributor);
+        //   }
+        //   tree[x.id].contrib = contributorIDs[x.contributor];
+        //   for(uint64_t r:x.children) {
+        //     // std::cerr << "requested newNode with "<< to_process.size() << ' ' << x.id << ' ' << x.cid << ' ' <<r<<' ' <<x.children.size()<<std::endl;
+        //     int onx = newNode();
+        //     tree[onx] = {r, short(tree[x.id].depth+1), 0, x.id, 0, 'q'};
+        //     if(checkduplicate(onx))
+        //       tree[onx].state = '2';
+        //     else
+        //       addPendingOutbound.push_back(genPOM(onx));
+        //     emit(onx, Compl3t34bl3(getState(onx), tree[onx].depth, tree[onx].depth%p));
+        //   }
+        // } else if(x.state == 'u') {
+        //   addPendingOutbound.push_back(genPOM(x.id));
         // }
-        if(tree[x.id].state == 'd' || tree[x.id].state == '2') continue;
-        if(x.state == 'c') {
-          tree[x.id].state = 'd';
-          if(!contributorIDs.contains(x.contributor)) {
-            contributorIDs[x.contributor] = contributors.size();
-            contributors.push_back(x.contributor);
-          }
-          tree[x.id].contrib = contributorIDs[x.contributor];
-          for(uint64_t r:x.children) {
-            // std::cerr << "requested newNode with "<< to_process.size() << ' ' << x.id << ' ' << x.cid << ' ' <<r<<' ' <<x.children.size()<<std::endl;
-            int onx = newNode();
-            tree[onx] = {r, short(tree[x.id].depth+1), 0, x.id, 0, 'q'};
-            if(checkduplicate(onx))
-              tree[onx].state = '2';
-            else
-              addPendingOutbound.push_back(genPOM(onx));
-            emit(onx, Compl3t34bl3(getState(onx), tree[onx].depth, tree[onx].depth%p));
-          }
-        } else if(x.state == 'u') {
-          addPendingOutbound.push_back(genPOM(x.id));
-        }
         
-        if(x.state == 'c' || x.state == 'u') {
-          if(workerConnections.find(x.cid) != workerConnections.end())
-            if(workerConnections[x.cid].attachedWorkunits.contains(x.id))
-              workerConnections[x.cid].attachedWorkunits.erase(x.id);
-        } else {
-          // note that only workerhandler is allowed to delete from workerconnections
-          // so if we somehow sent to a deleted connection, recycle it immediately
-          if(workerConnections.find(x.cid) != workerConnections.end())
-            workerConnections[x.cid].attachedWorkunits.insert(x.id);
-          else addPendingOutbound.push_back(genPOM(x.id));
-        }
+        // if(x.state == 'c' || x.state == 'u') {
+        //   if(workerConnections.find(x.cid) != workerConnections.end())
+        //     if(workerConnections[x.cid].attachedWorkunits.contains(x.id))
+        //       workerConnections[x.cid].attachedWorkunits.erase(x.id);
+        // } else {
+        //   // note that only workerhandler is allowed to delete from workerconnections
+        //   // so if we somehow sent to a deleted connection, recycle it immediately
+        //   if(workerConnections.find(x.cid) != workerConnections.end())
+        //     workerConnections[x.cid].attachedWorkunits.insert(x.id);
+        //   else addPendingOutbound.push_back(genPOM(x.id));
+        // }
       }
     }
     pendingOutbound.enqueue_bulk(addPendingOutbound.begin(), addPendingOutbound.size());
@@ -292,19 +137,19 @@ void workunitHandler() {
     //     pendingOutbound.enqueue(i);
     // }
     if((++idx) % 256 == 0) {
-      const std::lock_guard<std::mutex> lock(searchtree_mutex);
+      // const std::lock_guard<std::mutex> lock(searchtree_mutex);
       const std::lock_guard<std::mutex> lock2(workerConnections_mutex);
       std::stringstream res;
       auto now_tt = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
       res << std::put_time(std::gmtime(&now_tt), "%c %Z") << " conn#: " << workerConnections.size();
       res << " q#: "<<pendingOutbound.size_approx() << " pending#: "<<pendingInbound.size_approx();
       adminConsoleHandler_queue.enqueue({1, 0, res.str()});
-      if(idx % 4096 == 0) {
-        dumpTree(autosave1);
-        std::stringstream res2; res2 << "autosaved to "<<autosave1;
-        swap(autosave1, autosave2);
-        adminConsoleHandler_queue.enqueue({1, 0, res2.str()});
-      }
+      // if(idx % 4096 == 0) {
+      //   dumpTree(autosave1);
+      //   std::stringstream res2; res2 << "autosaved to "<<autosave1;
+      //   swap(autosave1, autosave2);
+      //   adminConsoleHandler_queue.enqueue({1, 0, res2.str()});
+      // }
     }
   }
 }
@@ -364,132 +209,132 @@ void adminConsoleHandler() {
       std::stringstream f; f << _f.rdbuf();
       woker(mgr, nx.conn_id, {1, f.str()});
     } else if(com == "actual-init") {
-      const std::lock_guard<std::mutex> lock(searchtree_mutex);
-      std::string options;
-      if(treeSize != 0) {
-        woker(mgr, nx.conn_id, {1, "failed, tree is already initialized"});
-        goto fail;
-      }
-      // TODO: assumes stator = 0
-      s >> p >> width >> sym >> l4h;
-      if(sym != 0 && sym != 1) {
-        woker(mgr, nx.conn_id, {1, "failed, unsupported symmetry"});
-        continue;
-      }
-      for (int i = 0; i < 2 * p; i++) {
-        uint64_t x = 0; std::string row;
-        s >> row;
-        if(sz(row) != width)  {
-          woker(mgr, nx.conn_id, {1, "failed, bad row length"});
-          goto fail;
-        }
-        for (int j = 0; j < width; j++)
-          if (row[j] == 'o')
-            x |= (1ull << j);
-// struct node { uint64_t row; int depth, shift, parent, contrib; char state; };
-        tree[newNode()]={x, short(i+1), 0, i-1, 0, 'd'};
-      } s>>options;
-      if (options[0] == 'y' || options[0] == 'Y') {
-        int filterrows; s>>filterrows;
-        for (int i = 0; i < filterrows; i++) {
-          uint64_t x = 0; std::string filter; s >> filter;
-          if(sz(filter) != width) {
-            woker(mgr, nx.conn_id, {1, "failed, bad filter length, must be w"});
-            goto fail;
-          }
-          for (int j = 0; j < width; j++)
-            if (filter[j] == 'o')
-              x |= (1ull << j);
-          filters.push_back(x);
-        }
-        for(int idx=0; idx<2; idx++){
-          int cnt; s>>cnt;
-          leftborder[idx] = std::vector<uint64_t>(cnt);
-          for(int i=0; i<cnt; i++){
-            std::string t; s>>t;
-            if(sz(t) != p)  {
-              woker(mgr, nx.conn_id, {1, "failed, bad fix length, must be p"});
-              goto fail;
-            }
-            for(int j=0; j<p; j++) if(t[j] == 'o') leftborder[idx][i] |= (1ull << j);
-          }
-        }
-        exInitrow = std::vector<uint64_t>(2*p);
-        for(int i=0; i<2*p; i++) {
-          uint64_t x = 0; std::string row;
-          s >> row;
-          if(sz(row) != width)  {
-            woker(mgr, nx.conn_id, {1, "failed, bad row length"});
-            goto fail;
-          }
-          for (int j = 0; j < width; j++)
-            if (row[j] == 'o')
-              x |= (1ull << j);
-          exInitrow[i] = x;
-        }
-      }
-      assert(treeSize == 2*p);
-      tree[2*p-1].state = 'q';
-      pendingOutbound.enqueue(genPOM(2*p-1));
-      if(s.fail()) {
-        treeSize = 0;
-        woker(mgr, nx.conn_id, {1, "unknown parsing failure"});
-        goto fail;
-      }
-      woker(mgr, nx.conn_id, {1, "successfully parsed input:\n<pre><code>" + nx.message.substr(12)+"</code></pre>"});
-      fail:;
+//       const std::lock_guard<std::mutex> lock(searchtree_mutex);
+//       std::string options;
+//       if(treeSize != 0) {
+//         woker(mgr, nx.conn_id, {1, "failed, tree is already initialized"});
+//         goto fail;
+//       }
+//       // TODO: assumes stator = 0
+//       s >> p >> width >> sym >> l4h;
+//       if(sym != 0 && sym != 1) {
+//         woker(mgr, nx.conn_id, {1, "failed, unsupported symmetry"});
+//         continue;
+//       }
+//       for (int i = 0; i < 2 * p; i++) {
+//         uint64_t x = 0; std::string row;
+//         s >> row;
+//         if(sz(row) != width)  {
+//           woker(mgr, nx.conn_id, {1, "failed, bad row length"});
+//           goto fail;
+//         }
+//         for (int j = 0; j < width; j++)
+//           if (row[j] == 'o')
+//             x |= (1ull << j);
+// // struct node { uint64_t row; int depth, shift, parent, contrib; char state; };
+//         tree[newNode()]={x, short(i+1), 0, i-1, 0, 'd'};
+//       } s>>options;
+//       if (options[0] == 'y' || options[0] == 'Y') {
+//         int filterrows; s>>filterrows;
+//         for (int i = 0; i < filterrows; i++) {
+//           uint64_t x = 0; std::string filter; s >> filter;
+//           if(sz(filter) != width) {
+//             woker(mgr, nx.conn_id, {1, "failed, bad filter length, must be w"});
+//             goto fail;
+//           }
+//           for (int j = 0; j < width; j++)
+//             if (filter[j] == 'o')
+//               x |= (1ull << j);
+//           filters.push_back(x);
+//         }
+//         for(int idx=0; idx<2; idx++){
+//           int cnt; s>>cnt;
+//           leftborder[idx] = std::vector<uint64_t>(cnt);
+//           for(int i=0; i<cnt; i++){
+//             std::string t; s>>t;
+//             if(sz(t) != p)  {
+//               woker(mgr, nx.conn_id, {1, "failed, bad fix length, must be p"});
+//               goto fail;
+//             }
+//             for(int j=0; j<p; j++) if(t[j] == 'o') leftborder[idx][i] |= (1ull << j);
+//           }
+//         }
+//         exInitrow = std::vector<uint64_t>(2*p);
+//         for(int i=0; i<2*p; i++) {
+//           uint64_t x = 0; std::string row;
+//           s >> row;
+//           if(sz(row) != width)  {
+//             woker(mgr, nx.conn_id, {1, "failed, bad row length"});
+//             goto fail;
+//           }
+//           for (int j = 0; j < width; j++)
+//             if (row[j] == 'o')
+//               x |= (1ull << j);
+//           exInitrow[i] = x;
+//         }
+//       }
+//       assert(treeSize == 2*p);
+//       tree[2*p-1].state = 'q';
+//       pendingOutbound.enqueue(genPOM(2*p-1));
+//       if(s.fail()) {
+//         treeSize = 0;
+//         woker(mgr, nx.conn_id, {1, "unknown parsing failure"});
+//         goto fail;
+//       }
+//       woker(mgr, nx.conn_id, {1, "successfully parsed input:\n<pre><code>" + nx.message.substr(12)+"</code></pre>"});
+//       fail:;
     } else if (com == "loadsave") {
-      const std::lock_guard<std::mutex> lock(searchtree_mutex);
-      if(treeSize != 0) {
-        woker(mgr, nx.conn_id, {1, "failed, tree is already initialized"});
-      } else {
-        std::string fn; s>>fn;
-        loadTree(fn);
-        int cnt = 0;
-        for(int i=0; i<treeSize; i++)
-          if(tree[i].state == 'q') {
-            cnt++;
-            pendingOutbound.enqueue(genPOM(i));
-          }
-        woker(mgr, nx.conn_id, {1, "loaded " + std::to_string(treeSize) + " nodes from "+fn+
-        " and queued "+std::to_string(cnt)+" nodes"});
-      }
+      // const std::lock_guard<std::mutex> lock(searchtree_mutex);
+      // if(treeSize != 0) {
+      //   woker(mgr, nx.conn_id, {1, "failed, tree is already initialized"});
+      // } else {
+      //   std::string fn; s>>fn;
+      //   loadTree(fn);
+      //   int cnt = 0;
+      //   for(int i=0; i<treeSize; i++)
+      //     if(tree[i].state == 'q') {
+      //       cnt++;
+      //       pendingOutbound.enqueue(genPOM(i));
+      //     }
+      //   woker(mgr, nx.conn_id, {1, "loaded " + std::to_string(treeSize) + " nodes from "+fn+
+      //   " and queued "+std::to_string(cnt)+" nodes"});
+      // }
     } else if(com == "dumpsave") {
-      const std::lock_guard<std::mutex> lock(searchtree_mutex);
-      std::string fn; s>>fn;
-      dumpTree(fn);
-      // TODO: NE node process here
-      woker(mgr, nx.conn_id, {1, "saved " + std::to_string(treeSize) + " nodes to "+fn});
+      // const std::lock_guard<std::mutex> lock(searchtree_mutex);
+      // std::string fn; s>>fn;
+      // dumpTree(fn);
+      // // TODO: NE node process here
+      // woker(mgr, nx.conn_id, {1, "saved " + std::to_string(treeSize) + " nodes to "+fn});
     } else if(com == "treestats") {
       woker(mgr, nx.conn_id, {1, "crunching tree stats..."});
-      const std::lock_guard<std::mutex> lock(searchtree_mutex);
-      std::stringstream fx;
-      int maxdep = 0, dup = 0;
-      std::vector<std::pair<int, std::string>> conIdx;
-      for(auto s:contributors) conIdx.push_back({0, s});
-      for(int i=0; i<treeSize; i++) {
-        maxdep = std::max(maxdep, (int)tree[i].depth);
-        dup += (tree[i].state == '2');
-      }
-      std::vector<int> ongoing(maxdep+1), total(maxdep+1);
-      for(int i=0;i<treeSize; i++) {
-        total[tree[i].depth]++;
-        if(tree[i].state != 'd' && tree[i].state != '2') ongoing[tree[i].depth]++;
-        else if(i>=2*p) conIdx[tree[i].contrib].first++;
-      }
-      fx << treeSize << " nodes, " << dup << " duplicates<br>";
-      fx << "max depth "<<maxdep <<"<br>";
-      fx << "profile";
-      for(int i=0; i<=maxdep; i++){
-        if(ongoing[i])fx<<' '<<ongoing[i]<<'/'<<total[i];
-        else fx<<' '<<total[i];
-      }
-      fx<<"<br>contributors<br>";
-      std::sort(conIdx.begin(), conIdx.end()); std::reverse(conIdx.begin(), conIdx.end());
-      for(auto& [cnt, id]:conIdx)fx<<id<<": "<<cnt<<" nodes<br>";
-      fx<<longgestPartial;
-      if(oscillatorComplete.size())fx<<oscillatorComplete;
-      woker(mgr, nx.conn_id, {1, fx.str()});
+      // const std::lock_guard<std::mutex> lock(searchtree_mutex);
+      // std::stringstream fx;
+      // int maxdep = 0, dup = 0;
+      // std::vector<std::pair<int, std::string>> conIdx;
+      // for(auto s:contributors) conIdx.push_back({0, s});
+      // for(int i=0; i<treeSize; i++) {
+      //   maxdep = std::max(maxdep, (int)tree[i].depth);
+      //   dup += (tree[i].state == '2');
+      // }
+      // std::vector<int> ongoing(maxdep+1), total(maxdep+1);
+      // for(int i=0;i<treeSize; i++) {
+      //   total[tree[i].depth]++;
+      //   if(tree[i].state != 'd' && tree[i].state != '2') ongoing[tree[i].depth]++;
+      //   else if(i>=2*p) conIdx[tree[i].contrib].first++;
+      // }
+      // fx << treeSize << " nodes, " << dup << " duplicates<br>";
+      // fx << "max depth "<<maxdep <<"<br>";
+      // fx << "profile";
+      // for(int i=0; i<=maxdep; i++){
+      //   if(ongoing[i])fx<<' '<<ongoing[i]<<'/'<<total[i];
+      //   else fx<<' '<<total[i];
+      // }
+      // fx<<"<br>contributors<br>";
+      // std::sort(conIdx.begin(), conIdx.end()); std::reverse(conIdx.begin(), conIdx.end());
+      // for(auto& [cnt, id]:conIdx)fx<<id<<": "<<cnt<<" nodes<br>";
+      // fx<<longgestPartial;
+      // if(oscillatorComplete.size())fx<<oscillatorComplete;
+      // woker(mgr, nx.conn_id, {1, fx.str()});
     }
     else {
       woker(mgr, nx.conn_id, {1, "huh?"});
@@ -512,8 +357,8 @@ struct workerhandlerMessage {
 
 moodycamel::BlockingConcurrentQueue<workerhandlerMessage> workerHandler_queue;
 void postWorkerDisconnect(unsigned long conn) {
-  for(int i:workerConnections[conn].attachedWorkunits) // this is done with a lock on it anyways
-    pendingInbound.enqueue({i, conn, 'u', "", {}});
+  // for(int i:workerConnections[conn].attachedWorkunits) // this is done with a lock on it anyways
+  //   pendingInbound.enqueue({i, conn, 'u', "", {}});
 }
 void workerHandler() {
   MG_INFO(("Worker handler started running"));
@@ -598,17 +443,7 @@ void fn(mg_connection* c, int ev, void* ev_data) {
       // GET
       // v2: merge with /getwork
       std::stringstream res;
-      res << p << ' ' << width << ' ' << sym << ' ' << l4h << ' ' << maxwid << ' ' << stator << ' ';
-      res << exInitrow.size(); for(auto i:exInitrow) res << ' ' << i;
-      res << ' ' << filters.size(); for(auto i:filters) res << ' ' << i;
-      for(int s=0;s<2; s++){
-        res<<' '<<leftborder[s].size();
-        for(auto i:leftborder[s]) res<<' '<<i;
-      }
-      res<<'\n';
-      static unsigned long cid = 0;
-      cid++;
-      res<<cid<<'\n';
+      /* TODO */
       mg_http_reply(c, 200, "Content-Type: text/raw\n", "%s", res.str().c_str());
     } 
     else if(mg_match(hm->uri, mg_str("/getwork"), NULL)) {
@@ -635,10 +470,11 @@ void fn(mg_connection* c, int ev, void* ev_data) {
         // int cnt = std::min(amnt, (int)pendingOutbound.size());
         res << nodes.size()<<'\n';
         for(auto& pom:nodes) {
-          pendingInbound.enqueue({pom.id, wsid, 's', "", {}});
-          res<<pom.id<<' '<<pom.depth;
-          for(uint64_t x:pom.rows) res<<' '<<x;
-          res << '\n';
+          // pendingInbound.enqueue({pom.id, wsid, 's', "", {}});
+          // res<<pom.id<<' '<<pom.depth;
+          // for(uint64_t x:pom.rows) res<<' '<<x;
+          // res << '\n';
+          /* TODO */
         }
       }
       workerHandler_queue.enqueue({0, wsid, mg_millis()});
@@ -656,15 +492,16 @@ void fn(mg_connection* c, int ev, void* ev_data) {
       for(int i=0; i<amnt; i++) {
         int id=0, status=0;
         co >> id >> status;
-        if(status == 0)
-          pendingInbound.enqueue({id, wsid, 'u', "", {}});
-        else {
-          std::string cid; co >> cid;
-          int ch; co >> ch;
-          std::vector<uint64_t> rows(ch);
-          for(int i=0; i<ch; i++) co >> rows[i];
-          pendingInbound.enqueue({id, wsid, 'c', cid, rows});
-        }
+        /* TODO */
+        // if(status == 0)
+        //   pendingInbound.enqueue({id, wsid, 'u', "", {}});
+        // else {
+        //   std::string cid; co >> cid;
+        //   int ch; co >> ch;
+        //   std::vector<uint64_t> rows(ch);
+        //   for(int i=0; i<ch; i++) co >> rows[i];
+        //   pendingInbound.enqueue({id, wsid, 'c', cid, rows});
+        // }
       }
       workerHandler_queue.enqueue({0, wsid, mg_millis()});
       if(co.fail()) {
