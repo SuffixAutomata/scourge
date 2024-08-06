@@ -22,6 +22,7 @@ using std::min;
 #include "debug.h"
 #include "globals.h"
 #include "logic.h"
+#include "satlogic.h"
 #include "searchtree.h"
 
 int bdep = 0;

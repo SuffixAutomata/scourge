@@ -38,11 +38,11 @@ struct node {
     std::vector<std::vector<uint64_t>> rowlis(2);
     std::vector<int> maxasc = {1, 1};
     for(int x=0; x<2; x++) for(int j=0; j<n[x]; j++) {
-      maxasc[x] = max(maxasc[x], h[x][j].asc + 1);
+      maxasc[x] = std::max(maxasc[x], h[x][j].asc + 1);
       if(!rowcomp[x].contains(h[x][j].v))
         rowcomp[x][h[x][j].v] = rowlis[x].size(), rowlis[x].push_back(h[x][j].v);
     }
-    arithWriteToStream({(uint64_t)id, (uint64_t)v, (uint64_t)max(0,asc), (uint64_t)tags, 
+    arithWriteToStream({(uint64_t)id, (uint64_t)v, (uint64_t)std::max(0,asc), (uint64_t)tags, 
                         (uint64_t)rowlis[0].size(), (uint64_t)n[0], (uint64_t)maxasc[0],
                         (uint64_t)rowlis[1].size(), (uint64_t)n[1], (uint64_t)maxasc[1]},
                         {1ull<<32, 1ull<<8, 1ull<<32, 1ull<<32, 1ull<<32, 1ull<<32, 1ull<<32,
@@ -100,11 +100,17 @@ struct node {
     return cksum;
   }
 };
+#ifdef LARGETREE
+const int treeAlloc = 2097152*32;
+#else
+const int treeAlloc = 2097152;
+#endif
+
 struct searchTree {
   node *a;
   int depths[1000];
   int depthcnt[1000];
-  int treeSize = 0, treeAlloc = 2097152;
+  int treeSize = 0;
   searchTree() { a = new node[treeAlloc]; }
   ~searchTree() { delete[] a; }
   uint64_t dumpTree(std::ofstream &f) {

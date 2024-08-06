@@ -9,38 +9,22 @@
 const int worker_timeout_duration = 20000; // ms
 const int worker_ping_rate = 10000; // ms
 const int maxProcessedWUperSec = 1000000;
-#ifdef LARGETREE
-const int treeAlloc = 536870912;
-#else
-const int treeAlloc = 16777216;
-#endif
 
-/* parameters TODO */
+#include "logic.h"
+#include "searchtree.h"
 
-namespace _searchtree {
-/* TODO */
-}; using namespace _searchtree;
 
+// State, for admin
 std::string banner = "Welcome to Scourge v2.3\n";
 std::string longgestPartial;
 std::string oscillatorComplete;
 
-// ints store these and lock the tree instead because all the nodes will be queued here
-// TODO: refactor into pendingoutbound containing only a portion of the unprocessed nodes, will make getwork unlocking
-struct pendingOutboundMessage {
-  // int id, depth;
-  // std::vector<uint64_t> rows;
-};
-pendingOutboundMessage genPOM(int onx) {
-  // return pendingOutboundMessage{onx, tree[onx].depth, getState(onx)};
-};
-moodycamel::BlockingConcurrentQueue<pendingOutboundMessage> pendingOutbound;
+// Workunits stored as files, see pendingOutbound/<id div 1000>/<id>
+moodycamel::BlockingConcurrentQueue<int> pendingOutbound;
 
+// COMPLETE inbound messages also stored as files, see pendingInbound/<id div 1000>/<id>
 struct pendingInboundMessage {
-  // int id; unsigned long cid;
-  // char state; // u - uncomplete, c - complete, s - sent
-  // std::string contributor;
-  // std::vector<uint64_t> children;
+  int id; unsigned long cid; char state; std::string contributor;
 };
 moodycamel::BlockingConcurrentQueue<pendingInboundMessage> pendingInbound;
 
@@ -69,8 +53,44 @@ void woker(mg_mgr* const& mgr, const unsigned long conn, const wakeupCall& s) {
   mg_wakeup(mgr, conn, &resp, sizeof(resp));
 }
 
-void emit(int state, bool d = true){
-/* TODO */
+void emit(std::vector<uint64_t> mat, bool compl3t3) {
+  std::stringstream fxx;
+  static int bdep = 0;
+  if (!compl3t3) {
+    if (sz(mat) <= bdep)
+      return;
+    bdep = std::max(bdep, sz(mat));
+  } else
+    INFO << "[[OSC1LL4TOR COMPL3T3!!!]]\n";
+  std::string rle;
+  int cnt = 0, cur = 0;
+  auto f = [&](char x) {
+    if (x != cur) {
+      (cnt >= 2) ? rle += std::to_string(cnt) : "";
+      (cnt >= 1) ? rle += (char)cur : "";
+      cnt = 0, cur = x;
+    }
+    cnt++;
+  };
+  for (int r = 0; r * p < sz(mat); r++) {
+    r ? f('$') : void();
+    for (int x = r * p; x < sz(mat) && x < (r + 1) * p; x++) {
+      for (int j = 0; j < width; j++)
+        f("bo"[!!(mat[x] & (1ull << j))]);
+      f('b'), f('b'), f('b');
+    }
+  }
+  f('!');
+  (compl3t3 ? INFO : STATUS) << "x = 0, y = 0, rule = B3/S23\n" + rle + '!' << '\n';
+  fxx << "<pre style='white-space: pre-wrap; word-break:break-all'><code>";
+  fxx << "x = 0, y = 0, rule = B3/S23\n" + rle + "!</code></pre>" << std::endl;
+  if(compl3t3) {
+    oscillatorComplete += fxx.str();
+    std::ofstream fx("osc-complete");
+    fx<<oscillatorComplete<<std::endl; fx.flush(); fx.close();
+  }
+  else longgestPartial = fxx.str();
+  adminConsoleHandler_queue.enqueue({1, 0, fxx.str()});
 }
 
 struct workerInfo {
@@ -80,6 +100,7 @@ struct workerInfo {
 };
 std::map<unsigned long, workerInfo> workerConnections;
 std::mutex workerConnections_mutex;
+std::mutex searchtree_mutex;
 
 void workunitHandler() {
   // every T seconds clear out B2A and regenerate A2B node
@@ -90,10 +111,10 @@ void workunitHandler() {
     std::this_thread::sleep_for(1 * std::chrono::seconds(1));
     // process pendingInbound but process at most 1000 to ensure that pendingOutbound can be refreshed
     // only acquire the lock for a shot amount of time
-    std::vector<pendingOutboundMessage> addPendingOutbound;
+    std::vector<int> addPendingOutbound;
     std::vector<pendingInboundMessage> to_process(maxProcessedWUperSec);
     to_process.resize(pendingInbound.try_dequeue_bulk(to_process.begin(), maxProcessedWUperSec));
-    {  // const std::lock_guard<std::mutex> lock(searchtree_mutex);
+    { const std::lock_guard<std::mutex> lock(searchtree_mutex);
       const std::lock_guard<std::mutex> lock2(workerConnections_mutex);
       for(auto& x:to_process) {
         // if(tree[x.id].state == 'd' || tree[x.id].state == '2') continue;
@@ -132,24 +153,22 @@ void workunitHandler() {
       }
     }
     pendingOutbound.enqueue_bulk(addPendingOutbound.begin(), addPendingOutbound.size());
-    // { const std::lock_guard<std::mutex> lock(pendingOutbound_mutex);
-    //   for(int i:addPendingOutbound)
-    //     pendingOutbound.enqueue(i);
-    // }
     if((++idx) % 256 == 0) {
-      // const std::lock_guard<std::mutex> lock(searchtree_mutex);
+      const std::lock_guard<std::mutex> lock(searchtree_mutex);
       const std::lock_guard<std::mutex> lock2(workerConnections_mutex);
       std::stringstream res;
       auto now_tt = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
       res << std::put_time(std::gmtime(&now_tt), "%c %Z") << " conn#: " << workerConnections.size();
       res << " q#: "<<pendingOutbound.size_approx() << " pending#: "<<pendingInbound.size_approx();
       adminConsoleHandler_queue.enqueue({1, 0, res.str()});
-      // if(idx % 4096 == 0) {
-      //   dumpTree(autosave1);
-      //   std::stringstream res2; res2 << "autosaved to "<<autosave1;
-      //   swap(autosave1, autosave2);
-      //   adminConsoleHandler_queue.enqueue({1, 0, res2.str()});
-      // }
+      if(idx % 4096 == 0) {
+        std::ofstream dump(autosave1, std::ios::binary);
+        dumpf(dump, "dumpTree");
+        dump.flush(); dump.close();
+        std::stringstream res2; res2 << "autosaved to "<<autosave1;
+        swap(autosave1, autosave2);
+        adminConsoleHandler_queue.enqueue({1, 0, res2.str()});
+      }
     }
   }
 }
@@ -284,21 +303,23 @@ void adminConsoleHandler() {
 //       woker(mgr, nx.conn_id, {1, "successfully parsed input:\n<pre><code>" + nx.message.substr(12)+"</code></pre>"});
 //       fail:;
     } else if (com == "loadsave") {
-      // const std::lock_guard<std::mutex> lock(searchtree_mutex);
-      // if(treeSize != 0) {
-      //   woker(mgr, nx.conn_id, {1, "failed, tree is already initialized"});
-      // } else {
-      //   std::string fn; s>>fn;
-      //   loadTree(fn);
-      //   int cnt = 0;
-      //   for(int i=0; i<treeSize; i++)
-      //     if(tree[i].state == 'q') {
-      //       cnt++;
-      //       pendingOutbound.enqueue(genPOM(i));
-      //     }
-      //   woker(mgr, nx.conn_id, {1, "loaded " + std::to_string(treeSize) + " nodes from "+fn+
-      //   " and queued "+std::to_string(cnt)+" nodes"});
-      // }
+      const std::lock_guard<std::mutex> lock(searchtree_mutex);
+      if(tree.treeSize != 0) {
+        woker(mgr, nx.conn_id, {1, "failed, tree is already initialized"});
+      } else {
+        std::string fn; s>>fn;
+        std::ifstream dump(fn, std::ios::binary);
+        loadf(dump, "loadTree");
+        int cnt = 0;
+        for(int i=0; i<tree.treeSize; i++)
+          if(tree.a[i].tags & TAG_QUEUED) {
+            cnt++;
+            // TODO: init queue state
+            // pendingOutbound.enqueue(genPOM(i));
+          }
+        woker(mgr, nx.conn_id, {1, "loaded " + std::to_string(tree.treeSize) + " nodes from "+fn+
+        " and queued "+std::to_string(cnt)+" nodes"});
+      }
     } else if(com == "dumpsave") {
       // const std::lock_guard<std::mutex> lock(searchtree_mutex);
       // std::string fn; s>>fn;
