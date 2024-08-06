@@ -145,92 +145,94 @@ struct searchTree {
     }
     return cksum;
   }
-  uint64_t loadWorkUnit(std::ifstream &f) {
-    for (int i = 0; i < 1000; i++)
-      depthcnt[i] = depths[i] = 0;
-    std::string buf(6, 0);
-    f.read(buf.data(), 6);
-    assert(buf == "terezi");
-    readInt(wu_onx, f);
-    readInt(treeSize, f);
-    assert(treeSize == 2 * p);
-    std::vector<int> depthShit(2*p);
-    for(int i=0; i<2*p; i++) readInt(depthShit[i], f);
-    uint64_t cksum = 0;
-    for (int i = 0; i < treeSize; i++) {
-      int ii;
-      cksum ^= a[i].load(ii, f);
-      partialLoadOriginalNodeid[i] = ii;
-      partialLoadNewNodeid[ii] = i;
-      a[i].ch[0] = a[i].ch[1] = a[i].ch[2] = a[i].ch[3] = -1;
-      if (i) {
-        assert(partialLoadNewNodeid[a[i].asc] == i-1);
-        a[i].asc = i-1;
-        a[a[i].asc].ch[a[i].v] = i;
-      } else a[i].asc = -1;
-      a[i].depth = depthShit[i];
-    }
-    f.read(buf.data(), 6);
-    assert(buf == "pyrope");
-    assert(partialLoadOriginalNodeid[2*p-1] == wu_onx);
-    return cksum;
-  }
-  uint64_t dumpWorkUnit(std::ofstream &f, int onx) {
-    f.write("terezi", 6);
-    writeInt(onx, f);
-    writeInt(2*p, f);
-    assert(a[onx].tags & TAG_QUEUED);
-    assert(!(a[onx].tags & TAG_REMOTE_QUEUED));
-    a[onx].tags |= TAG_REMOTE_QUEUED;
-    std::vector<int> td;
-    for(int i=0; i<2*p; i++) td.push_back(onx), onx = a[onx].asc;
-    std::reverse(td.begin(), td.end());
-    for(int i=0; i<2*p; i++) writeInt(a[td[i]].depth, f);
-    uint64_t cksum = 0;
-    for (int i = 0; i < 2*p; i++) 
-      cksum ^= a[td[i]].dump(td[i], f);
-    f.write("pyrope", 6);
-    return cksum;
-  }
-  uint64_t dumpWorkUnitResponse(std::ofstream &f) {
-    f.write("terezi", 6);
-    writeInt(wu_onx, f);
-    writeInt(treeSize, f);
-    uint64_t cksum = 0;
-    for (int i = 2*p; i < treeSize; i++) 
-      cksum ^= a[i].dump(i, f);
-    f.write("pyrope", 6);
-    return cksum;
-  }
-  uint64_t loadWorkUnitResponse(std::ifstream &f) {
-    std::string buf(6, 0);
-    f.read(buf.data(), 6);
-    assert(buf == "terezi");
-    readInt(wu_onx, f);
-    assert(a[wu_onx].tags & TAG_QUEUED);
-    assert((a[wu_onx].tags & TAG_REMOTE_QUEUED));
-    a[wu_onx].tags ^= TAG_QUEUED;
-    a[wu_onx].tags ^= TAG_REMOTE_QUEUED;
-    int xTreeSize;
-    readInt(xTreeSize, f);
-    uint64_t cksum = 0;
-    for (int i = treeSize; i < treeSize + xTreeSize - 2*p; i++) {
-      int ii;
-      cksum ^= a[i].load(ii, f); assert(ii == i + 2*p - treeSize);
-      if(a[i].asc < 2 * p) {
-        assert(a[i].asc == 2*p-1);
-        a[i].asc = wu_onx;
-      } else {
-        a[i].asc = a[i].asc + treeSize - 2*p;
-      }
-      a[i].ch[0] = a[i].ch[1] = a[i].ch[2] = a[i].ch[3] = -1;
-      a[a[i].asc].ch[a[i].v] = i;
-      a[i].depth = 1 + (i ? a[a[i].asc].depth : 0);
-    }
-    f.read(buf.data(), 6);
-    assert(buf == "pyrope");
-    return cksum;
-  }
+
+  // uint64_t loadWorkUnit(std::ifstream &f) {
+  //   for (int i = 0; i < 1000; i++)
+  //     depthcnt[i] = depths[i] = 0;
+  //   std::string buf(6, 0);
+  //   f.read(buf.data(), 6);
+  //   assert(buf == "terezi");
+  //   readInt(wu_onx, f);
+  //   readInt(treeSize, f);
+  //   assert(treeSize == 2 * p);
+  //   std::vector<int> depthShit(2*p);
+  //   for(int i=0; i<2*p; i++) readInt(depthShit[i], f);
+  //   uint64_t cksum = 0;
+  //   for (int i = 0; i < treeSize; i++) {
+  //     int ii;
+  //     cksum ^= a[i].load(ii, f);
+  //     partialLoadOriginalNodeid[i] = ii;
+  //     partialLoadNewNodeid[ii] = i;
+  //     a[i].ch[0] = a[i].ch[1] = a[i].ch[2] = a[i].ch[3] = -1;
+  //     if (i) {
+  //       assert(partialLoadNewNodeid[a[i].asc] == i-1);
+  //       a[i].asc = i-1;
+  //       a[a[i].asc].ch[a[i].v] = i;
+  //     } else a[i].asc = -1;
+  //     a[i].depth = depthShit[i];
+  //   }
+  //   f.read(buf.data(), 6);
+  //   assert(buf == "pyrope");
+  //   assert(partialLoadOriginalNodeid[2*p-1] == wu_onx);
+  //   return cksum;
+  // }
+  // uint64_t dumpWorkUnit(std::ofstream &f, int onx) {
+  //   f.write("terezi", 6);
+  //   writeInt(onx, f);
+  //   writeInt(2*p, f);
+  //   assert(a[onx].tags & TAG_QUEUED);
+  //   assert(!(a[onx].tags & TAG_REMOTE_QUEUED));
+  //   a[onx].tags |= TAG_REMOTE_QUEUED;
+  //   std::vector<int> td;
+  //   for(int i=0; i<2*p; i++) td.push_back(onx), onx = a[onx].asc;
+  //   std::reverse(td.begin(), td.end());
+  //   for(int i=0; i<2*p; i++) writeInt(a[td[i]].depth, f);
+  //   uint64_t cksum = 0;
+  //   for (int i = 0; i < 2*p; i++) 
+  //     cksum ^= a[td[i]].dump(td[i], f);
+  //   f.write("pyrope", 6);
+  //   return cksum;
+  // }
+  // uint64_t dumpWorkUnitResponse(std::ofstream &f) {
+  //   f.write("terezi", 6);
+  //   writeInt(wu_onx, f);
+  //   writeInt(treeSize, f);
+  //   uint64_t cksum = 0;
+  //   for (int i = 2*p; i < treeSize; i++) 
+  //     cksum ^= a[i].dump(i, f);
+  //   f.write("pyrope", 6);
+  //   return cksum;
+  // }
+  // uint64_t loadWorkUnitResponse(std::ifstream &f) {
+  //   std::string buf(6, 0);
+  //   f.read(buf.data(), 6);
+  //   assert(buf == "terezi");
+  //   readInt(wu_onx, f);
+  //   assert(a[wu_onx].tags & TAG_QUEUED);
+  //   assert((a[wu_onx].tags & TAG_REMOTE_QUEUED));
+  //   a[wu_onx].tags ^= TAG_QUEUED;
+  //   a[wu_onx].tags ^= TAG_REMOTE_QUEUED;
+  //   int xTreeSize;
+  //   readInt(xTreeSize, f);
+  //   uint64_t cksum = 0;
+  //   for (int i = treeSize; i < treeSize + xTreeSize - 2*p; i++) {
+  //     int ii;
+  //     cksum ^= a[i].load(ii, f); assert(ii == i + 2*p - treeSize);
+  //     if(a[i].asc < 2 * p) {
+  //       assert(a[i].asc == 2*p-1);
+  //       a[i].asc = wu_onx;
+  //     } else {
+  //       a[i].asc = a[i].asc + treeSize - 2*p;
+  //     }
+  //     a[i].ch[0] = a[i].ch[1] = a[i].ch[2] = a[i].ch[3] = -1;
+  //     a[a[i].asc].ch[a[i].v] = i;
+  //     a[i].depth = 1 + (i ? a[a[i].asc].depth : 0);
+  //   }
+  //   f.read(buf.data(), 6);
+  //   assert(buf == "pyrope");
+  //   return cksum;
+  // }
+  
   void flushTree() {}
   int newNode(node s, std::vector<std::vector<halfrow>> bufs) {
     assert(s.asc != -1 || treeSize == 0);
@@ -303,6 +305,7 @@ void loadf(std::ifstream &f, std::string mode) {
   calculateMasks(bthh);
   int filterrows;
   readInt(filterrows, f);
+  arithReadFromStream(filters, std::vector<uint64_t>(filterrows, 1<<width), f);
   filters = std::vector<uint64_t>(filterrows);
   for (int i = 0; i < filterrows; i++)
     readInt(filters[i], f);
@@ -310,10 +313,12 @@ void loadf(std::ifstream &f, std::string mode) {
     int sz; readInt(sz, f);
     arithReadFromStream(leftborder[s], std::vector<uint64_t>(sz, 1<<p), f);
   }
+  int eis; readInt(eis, f);
+  arithReadFromStream(exInitrow, std::vector<uint64_t>(eis, 1<<p), f);
   uint64_t cksum;
   if(mode == "loadTree") cksum = tree.loadTree(f);
-  else if(mode == "loadWorkunit") cksum = tree.loadWorkUnit(f);
-  else if(mode == "loadWorkunitResponse") cksum = tree.loadWorkUnitResponse(f);
+  else if(mode == "loadWorkunit") assert(0); //cksum = tree.loadWorkUnit(f);
+  else if(mode == "loadWorkunitResponse") assert(0); //cksum = tree.loadWorkUnitResponse(f);
   else assert(0);
   uint64_t expected_cksum; readInt(expected_cksum, f);
   INFO << "Loaded search tree; checksum " << std::hex << cksum << std::dec << "\n";
@@ -334,10 +339,12 @@ void dumpf(std::ofstream &f, std::string mode, int onx = -1) {
     writeInt(leftborder[s].size(), f);
     arithWriteToStream(leftborder[s], std::vector<uint64_t>(leftborder[s].size(), 1<<p), f);
   }
+  writeInt(exInitrow.size(), f);
+  arithWriteToStream(exInitrow, std::vector<uint64_t>(exInitrow.size(), 1<<p), f);
   uint64_t cksum;
   if(mode == "dumpTree") cksum = tree.dumpTree(f);
-  else if(mode == "dumpWorkunit") cksum = tree.dumpWorkUnit(f, onx);
-  else if(mode == "dumpWorkunitResponse") cksum = tree.dumpWorkUnitResponse(f);
+  else if(mode == "dumpWorkunit") assert(0); //cksum = tree.dumpWorkUnit(f, onx);
+  else if(mode == "dumpWorkunitResponse") assert(0); //cksum = tree.dumpWorkUnitResponse(f);
   else assert(0);
   writeInt(cksum, f);
   f.flush();

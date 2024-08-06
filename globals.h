@@ -48,6 +48,7 @@ int wu_onx;
 
 std::vector<uint64_t> filters;
 std::vector<uint64_t> leftborder[2];
+std::vector<uint64_t> exInitrow;
 
 std::vector<uint64_t> arithmeticDecode(const std::vector<uint64_t>& dwords, const std::vector<uint64_t>& maxvals) {
   std::vector<uint64_t> vals;

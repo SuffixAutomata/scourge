@@ -113,21 +113,27 @@ void genNextRows(std::vector<uint64_t> &state, int depth, int ahead,
   int phase = depth % p;
   std::vector<int> inst = {1, 0, -2, 0};
   auto idx = [&](int j) { return ((sym == 1) ? min(j, width - j - 1) : j); };
-  auto get = [&](int r, int j, int t) {
+  auto get = [&](int r, int j, int t, int v=0) {
     if (t == p)
       t = 0, j = (sym == 2) ? width - j - 1 : j;
+    // std::cerr << r << ' ' << j << ' ' << t << ' ';
     r = r * p + t - phase;
     int realRow = (r + depth - 2 * p) / p;
     if (j <= -1 && (realRow < (int)leftborder[-j-1].size())) {
       // WARN << j << ' ' << r << ' ' << t << '\n';
+      // std::cerr << "resolved to "<<((leftborder[-j-1][realRow] & (1ull << t)) ? 1 : 0)<<'\n';
       return (leftborder[-j-1][realRow] & (1ull << t)) ? 1 : 2;
     }
     if (t == -1)
       r = sz(state);
+    // std::cerr << "->"<<r<<'\n';
     if (j <= -1 || j >= width)
       return (2 - 0);
-    if (r < sz(state))
+    if (r < sz(state)) {
+      if(v && realRow < 2)
+        return (2 - !!(exInitrow[r+depth-2*p] & (1ull << j)));
       return (2 - !!(state[r] & (1ull << j)));
+    }
     return 3 + idx(j) + (r - sz(state)) * width;
   };
   auto eqify = [&](int i, int j) {
@@ -137,12 +143,23 @@ void genNextRows(std::vector<uint64_t> &state, int depth, int ahead,
   for (int row = sz(state); row < sz(state) + ahead; row++) {
     int r = (row + phase) / p, t = (row + phase) % p;
     for (int j = -1; j <= width; j++)
-      if (enforce & (1ull << (j + 1)))
-        trans({get(r - 2, j - 1, t), get(r - 2, j, t), get(r - 2, j + 1, t),
-               get(r - 1, j - 1, t), get(r - 1, j, t), get(r - 1, j + 1, t),
-               get(r, j - 1, t), get(r, j, t), get(r, j + 1, t),
-               get(r - 1, j, t + 1)},
-              inst);
+      if (enforce & (1ull << (j + 1))) {
+        std::vector<int> u = {get(r - 2, j - 1, t, 0), get(r - 2, j, t, 0), get(r - 2, j + 1, t, 0),
+              get(r - 1, j - 1, t, 0), get(r - 1, j, t, 0), get(r - 1, j + 1, t, 0),
+              get(r, j - 1, t, 0), get(r, j, t, 0), get(r, j + 1, t, 0),
+              get(r - 1, j, t + 1, 0)};
+        trans(u, inst);
+        if(exInitrow.size()) {
+          std::vector<int> u2 = {get(r - 2, j - 1, t, 1), get(r - 2, j, t, 1), get(r - 2, j + 1, t, 1),
+                get(r - 1, j - 1, t, 1), get(r - 1, j, t, 1), get(r - 1, j + 1, t, 1),
+                get(r, j - 1, t, 1), get(r, j, t, 1), get(r, j + 1, t, 1),
+                get(r - 1, j, t + 1, 1)};
+          if(u != u2) {
+            // std::cerr << ' ' << row << ' ' << j << '\n';
+            trans(u2, inst);
+          }
+        }
+      }
     if (t != p - 1)
       for (int j = 0; j < width; j++)
         if (enforce & (1ull << (j + 1)))

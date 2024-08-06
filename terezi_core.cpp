@@ -258,24 +258,30 @@ int main(int argc, char *argv[]) {
         INFO << "F1LT3R ROWS: \n";
         int filterrows;
         std::cin >> filterrows;
+        filters = std::vector<uint64_t>(filterrows);
         for (int i = 0; i < filterrows; i++) {
-          uint64_t x = 0;
-          std::string s;
-          std::cin >> s;
-          for (int j = 0; j < width; j++)
-            if (s[j] == 'o')
-              x |= (1ull << j);
-          filters.push_back(x);
+          std::string t; std::cin >> t;
+          assert(t.size() == (size_t)width);
+          for (int j = 0; j < width; j++) if (t[j] == 'o') filters[i] |= (1ull << j);
         }
-        INFO << "left columns: \n";
+        INFO << "L3FT COLUMNS: \n";
         for(int s=0; s<2; s++){
           int cnt; std::cin >> cnt;
           leftborder[s] = std::vector<uint64_t>(cnt);
           for(int i=0; i<cnt; i++){
             std::string t; std::cin >> t;
-            assert(t.size() == p);
+            assert(t.size() == (size_t)p);
             for(int j=0; j<p; j++) if(t[j] == 'o') leftborder[s][i] |= (1ull << j);
           }
+        }
+        INFO << "4LT 1N1TROWS: \n";
+        int eis; std::cin >> eis;
+        assert(eis == 0 || eis == 2*p);
+        exInitrow = std::vector<uint64_t>(eis);
+        for (int i = 0; i < eis; i++) {
+          std::string t; std::cin >> t;
+          assert(t.size() == (size_t)width);
+          for (int j = 0; j < width; j++) if (t[j] == 'o') exInitrow[i] |= (1ull << j);
         }
       }
     }
