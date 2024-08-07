@@ -12,18 +12,19 @@ const int maxProcessedWUperSec = 1000000;
 
 #include "logic.h"
 #include "searchtree.h"
-
+#include "cache.h"
 
 // State, for admin
 std::string banner = "Welcome to Scourge v2.3\n";
 std::string longgestPartial;
 std::string oscillatorComplete;
 
-// Workunits stored as files, see pendingOutbound/<id div 1000>/<id>
+Cache pendingOutboundCache;
 moodycamel::BlockingConcurrentQueue<int> pendingOutbound;
 
-// COMPLETE inbound messages also stored as files, see pendingInbound/<id div 1000>/<id>
+Cache pendingInboundCache;
 struct pendingInboundMessage {
+  // state: c - completed, u - unfinished, s - just sent
   int id; unsigned long cid; char state; std::string contributor;
 };
 moodycamel::BlockingConcurrentQueue<pendingInboundMessage> pendingInbound;
@@ -117,39 +118,43 @@ void workunitHandler() {
     { const std::lock_guard<std::mutex> lock(searchtree_mutex);
       const std::lock_guard<std::mutex> lock2(workerConnections_mutex);
       for(auto& x:to_process) {
-        // if(tree[x.id].state == 'd' || tree[x.id].state == '2') continue;
-        // if(x.state == 'c') {
-        //   tree[x.id].state = 'd';
-        //   if(!contributorIDs.contains(x.contributor)) {
-        //     contributorIDs[x.contributor] = contributors.size();
-        //     contributors.push_back(x.contributor);
-        //   }
-        //   tree[x.id].contrib = contributorIDs[x.contributor];
-        //   for(uint64_t r:x.children) {
-        //     // std::cerr << "requested newNode with "<< to_process.size() << ' ' << x.id << ' ' << x.cid << ' ' <<r<<' ' <<x.children.size()<<std::endl;
-        //     int onx = newNode();
-        //     tree[onx] = {r, short(tree[x.id].depth+1), 0, x.id, 0, 'q'};
-        //     if(checkduplicate(onx))
-        //       tree[onx].state = '2';
-        //     else
-        //       addPendingOutbound.push_back(genPOM(onx));
-        //     emit(onx, Compl3t34bl3(getState(onx), tree[onx].depth, tree[onx].depth%p));
-        //   }
-        // } else if(x.state == 'u') {
-        //   addPendingOutbound.push_back(genPOM(x.id));
-        // }
+        if(!(tree.a[x.id].tags & TAG_QUEUED)) continue;
+        if(x.state == 'c') {
+          // tree[x.id].state = 'd'; // do not update, loadWorkUnitResponse already does that
+          std::stringstream b(pendingInboundCache.get(x.id), std::ios::binary);
+          pendingInboundCache.erase(x.id);
+          int oldTreeSize = tree.treeSize;
+          loadf(b, "loadWorkunitResponse");
+          for(int idx=oldTreeSize; idx<tree.treeSize; idx++) {
+            // tree.a[idx].tags |= TAG_QUEUED; // No need either, dumpf does it
+            // if(checkduplicate(onx))
+            //   tree[onx].state = '2';
+            std::stringstream c(std::ios::binary);
+            dumpf(c, "dumpWorkunit");
+            pendingOutboundCache.set(idx, c.str());
+            addPendingOutbound.push_back(idx);
+            // emit(onx, Compl3t34bl3(getState(onx), tree[onx].depth, tree[onx].depth%p)); // TODO
+          }
+          // if(!contributorIDs.contains(x.contributor)) {
+          //   contributorIDs[x.contributor] = contributors.size();
+          //   contributors.push_back(x.contributor);
+          // }
+          // tree[x.id].contrib = contributorIDs[x.contributor];
+        } else if(x.state == 'u') {
+          addPendingOutbound.push_back(x.id);
+        }
         
-        // if(x.state == 'c' || x.state == 'u') {
-        //   if(workerConnections.find(x.cid) != workerConnections.end())
-        //     if(workerConnections[x.cid].attachedWorkunits.contains(x.id))
-        //       workerConnections[x.cid].attachedWorkunits.erase(x.id);
-        // } else {
-        //   // note that only workerhandler is allowed to delete from workerconnections
-        //   // so if we somehow sent to a deleted connection, recycle it immediately
-        //   if(workerConnections.find(x.cid) != workerConnections.end())
-        //     workerConnections[x.cid].attachedWorkunits.insert(x.id);
-        //   else addPendingOutbound.push_back(genPOM(x.id));
-        // }
+        if(x.state == 'c' || x.state == 'u') {
+          if(workerConnections.find(x.cid) != workerConnections.end())
+            if(workerConnections[x.cid].attachedWorkunits.contains(x.id))
+              workerConnections[x.cid].attachedWorkunits.erase(x.id);
+        } else {
+          // note that only workerhandler is allowed to delete from workerconnections
+          // so if we somehow sent to a deleted connection, recycle it immediately
+          if(workerConnections.find(x.cid) != workerConnections.end())
+            workerConnections[x.cid].attachedWorkunits.insert(x.id);
+          else addPendingOutbound.push_back(x.id);
+        }
       }
     }
     pendingOutbound.enqueue_bulk(addPendingOutbound.begin(), addPendingOutbound.size());
@@ -486,7 +491,8 @@ void fn(mg_connection* c, int ev, void* ev_data) {
           mg_http_reply(c, 200, "Content-Type: text/raw\n", "-1");
           return;
         }
-        std::vector<pendingOutboundMessage> nodes(amnt);
+        // TODO: dequeue until halfrows > amnt
+        std::vector<int> nodes(amnt);
         nodes.resize(pendingOutbound.try_dequeue_bulk(nodes.begin(), amnt));
         // int cnt = std::min(amnt, (int)pendingOutbound.size());
         res << nodes.size()<<'\n';

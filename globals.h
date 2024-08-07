@@ -90,7 +90,7 @@ std::vector<uint64_t> arithmeticEncode(const std::vector<uint64_t>& vals, const 
 }
 
 template<typename T>
-void writeInt(T x, std::ofstream& f) {
+void writeInt(T x, std::ostream& f) {
   char y;
   while(x >= 128) {
     y = (x & 127) | 128;
@@ -102,7 +102,7 @@ void writeInt(T x, std::ofstream& f) {
 }
 
 template<typename T>
-void readInt(T& x, std::ifstream& f) {
+void readInt(T& x, std::istream& f) {
   x = 0;
   char y = -128;
   int s = 0;
@@ -113,7 +113,7 @@ void readInt(T& x, std::ifstream& f) {
   }
 }
 
-void arithWriteToStream(const std::vector<uint64_t>& vals, const std::vector<uint64_t>& maxvals, std::ofstream& f) {
+void arithWriteToStream(const std::vector<uint64_t>& vals, const std::vector<uint64_t>& maxvals, std::ostream& f) {
   assert(f.binary);
   std::vector<uint64_t> encoded = arithmeticEncode(vals, maxvals);
   int cnt = sz(encoded);
@@ -135,7 +135,7 @@ void arithWriteToStream(const std::vector<uint64_t>& vals, const std::vector<uin
   f.write(asBytes.data(), v);
 }
 
-void arithReadFromStream(std::vector<uint64_t>& vals, const std::vector<uint64_t>& maxvals, std::ifstream& f) {
+void arithReadFromStream(std::vector<uint64_t>& vals, const std::vector<uint64_t>& maxvals, std::istream& f) {
   assert(f.binary);
   int v; readInt(v, f);
   // WARN << v << '\n';
