@@ -326,11 +326,13 @@ void adminConsoleHandler() {
         " and queued "+std::to_string(cnt)+" nodes"});
       }
     } else if(com == "dumpsave") {
-      // const std::lock_guard<std::mutex> lock(searchtree_mutex);
-      // std::string fn; s>>fn;
+      const std::lock_guard<std::mutex> lock(searchtree_mutex);
+      std::string fn; s>>fn;
+      std::ofstream dump(fn, std::ios::binary);
+      dumpf(dump, "loadTree");
       // dumpTree(fn);
       // // TODO: NE node process here
-      // woker(mgr, nx.conn_id, {1, "saved " + std::to_string(treeSize) + " nodes to "+fn});
+      woker(mgr, nx.conn_id, {1, "saved " + std::to_string(tree.treeSize) + " nodes to "+fn});
     } else if(com == "treestats") {
       woker(mgr, nx.conn_id, {1, "crunching tree stats..."});
       // const std::lock_guard<std::mutex> lock(searchtree_mutex);
@@ -471,19 +473,30 @@ void fn(mg_connection* c, int ev, void* ev_data) {
       std::stringstream res;
       /* TODO */
       mg_http_reply(c, 200, "Content-Type: text/raw\n", "%s", res.str().c_str());
-    } 
-    else if(mg_match(hm->uri, mg_str("/getwork"), NULL)) {
+    } else if(mg_match(hm->uri, mg_str("/keepalive"), NULL)) {
       // POST request, should contain three parameters: websocket id & ephemerality & amount
       // returns amount * [workunit identifier]
       std::stringstream co(_mg_str_to_stdstring(hm->body));
       std::stringstream res;
       unsigned long wsid=0;
       co >> wsid;
+      workerHandler_queue.enqueue({0, wsid, mg_millis()});
+      if(co.fail())
+        mg_http_reply(c, 500, "Content-Type: text/raw\n", "");
+      else
+        mg_http_reply(c, 200, "Content-Type: text/raw\n", "OK");
+    } else if(mg_match(hm->uri, mg_str("/getwork"), NULL)) {
+      // POST request, should contain three parameters: websocket id & ephemerality & amount
+      // returns amount * [workunit identifier]
+      std::stringstream co(_mg_str_to_stdstring(hm->body));
+      std::ostringstream res(std::ios::binary);
+      unsigned long wsid=0;
+      co >> wsid;
       int ephemeral=0;
       co >> ephemeral;
       if(!ephemeral) {
         // TODO. not yet implemented
-        res << "0\n";
+        writeInt(0, res);
       } else {
         int amnt=0; co >> amnt;
         if(!(0 <= amnt && amnt <= 10000) || co.fail()) {
@@ -495,7 +508,7 @@ void fn(mg_connection* c, int ev, void* ev_data) {
         std::vector<int> nodes(amnt);
         nodes.resize(pendingOutbound.try_dequeue_bulk(nodes.begin(), amnt));
         // int cnt = std::min(amnt, (int)pendingOutbound.size());
-        res << nodes.size()<<'\n';
+        writeInt(nodes.size(), res);
         for(auto& pom:nodes) {
           // pendingInbound.enqueue({pom.id, wsid, 's', "", {}});
           // res<<pom.id<<' '<<pom.depth;
@@ -505,30 +518,38 @@ void fn(mg_connection* c, int ev, void* ev_data) {
         }
       }
       workerHandler_queue.enqueue({0, wsid, mg_millis()});
-      if(co.fail())
-        mg_http_reply(c, 200, "Content-Type: text/raw\n", "-1");
-      else
-        mg_http_reply(c, 200, "Content-Type: text/raw\n", "%s", res.str().c_str());
+      mg_http_reply(c, 200, "Content-Type: text/binary\n", "%.*s", (int)res.str().size(), res.str().c_str());
+      // TODO update for binary, send 501 for no more work temporarily
+      // if(co.fail())
+      //   mg_http_reply(c, 200, "Content-Type: text/raw\n", "-1");
+      // else
+      //   
     } else if(mg_match(hm->uri, mg_str("/returnwork"), NULL)) {
       // POST request, should contain amount, websocket connection id
       // then amount times the following: workunit id, status - 0 or 1
       // if status is 1, further contain contributor id and all children
-      std::stringstream co(_mg_str_to_stdstring(hm->body));
-      int amnt; co >> amnt;
-      unsigned long wsid; co >> wsid;
+      std::stringstream co(_mg_str_to_stdstring(hm->body), std::ios::binary);
+      int amnt;
+      readInt(amnt, co);
+      unsigned long wsid;
+      readInt(wsid, co);
       for(int i=0; i<amnt; i++) {
         int id=0, status=0;
-        co >> id >> status;
-        /* TODO */
-        // if(status == 0)
-        //   pendingInbound.enqueue({id, wsid, 'u', "", {}});
-        // else {
-        //   std::string cid; co >> cid;
-        //   int ch; co >> ch;
+        readInt(id, co);
+        readInt(status, co);
+        if(status == 0)
+          pendingInbound.enqueue({id, wsid, 'u', "", {}}); // tofix
+        else {
+          int nexlen; readInt(nexlen, co);
+          assert(0 <= nexlen && nexlen <= 1000000); // tofix
+          std::string v; co.read(v.data(), nexlen);
+          pendingInboundCache.set(id, v);
+          // std::string cid; co >> cid;
+          // int ch; co >> ch;
         //   std::vector<uint64_t> rows(ch);
-        //   for(int i=0; i<ch; i++) co >> rows[i];
-        //   pendingInbound.enqueue({id, wsid, 'c', cid, rows});
-        // }
+          // for(int i=0; i<ch; i++) co >> rows[i];
+          pendingInbound.enqueue({id, wsid, 'c', cid, rows}); // tofix
+        }
       }
       workerHandler_queue.enqueue({0, wsid, mg_millis()});
       if(co.fail()) {
