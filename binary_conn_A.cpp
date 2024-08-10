@@ -16,13 +16,13 @@ void fn(mg_connection* c, int ev, void* ev_data) {
     mg_http_message* hm = (mg_http_message*) ev_data;
     if(mg_match(hm->uri, mg_str("/get"), NULL)) {
       // GET
-      std::stringstream res(std::ios::binary);
+      std::ostringstream res(std::ios::binary);
       writeInt(69, res);
       writeString("terezi", res);
       mg_http_reply(c, 200, "Content-Type: text/binary\n", "%.*s", (int)res.str().size(), res.str().data());
     } else if(mg_match(hm->uri, mg_str("/send"), NULL)) {
       // POST
-      std::stringstream co(_mg_str_to_stdstring(hm->body), std::ios::binary);
+      std::istringstream co(_mg_str_to_stdstring(hm->body), std::ios::binary);
       int v1; readInt(v1, co);
       std::string v2; readString(v2, co);
       if(co.fail()) goto fail;

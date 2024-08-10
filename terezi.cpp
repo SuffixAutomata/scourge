@@ -121,7 +121,7 @@ void workunitHandler() {
         if(!(tree.a[x.id].tags & TAG_QUEUED)) continue;
         if(x.state == 'c') {
           // tree[x.id].state = 'd'; // do not update, loadWorkUnitResponse already does that
-          std::stringstream b(pendingInboundCache.get(x.id), std::ios::binary);
+          std::istringstream b(pendingInboundCache.get(x.id), std::ios::binary);
           pendingInboundCache.erase(x.id);
           int oldTreeSize = tree.treeSize;
           loadf(b, "loadWorkunitResponse");
@@ -129,7 +129,7 @@ void workunitHandler() {
             // tree.a[idx].tags |= TAG_QUEUED; // No need either, dumpf does it
             // if(checkduplicate(onx))
             //   tree[onx].state = '2';
-            std::stringstream c(std::ios::binary);
+            std::ostringstream c(std::ios::binary);
             dumpf(c, "dumpWorkunit");
             pendingOutboundCache.set(idx, c.str());
             addPendingOutbound.push_back(idx);
@@ -161,7 +161,7 @@ void workunitHandler() {
     if((++idx) % 256 == 0) {
       const std::lock_guard<std::mutex> lock(searchtree_mutex);
       const std::lock_guard<std::mutex> lock2(workerConnections_mutex);
-      std::stringstream res;
+      std::ostringstream res;
       auto now_tt = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
       res << std::put_time(std::gmtime(&now_tt), "%c %Z") << " conn#: " << workerConnections.size();
       res << " q#: "<<pendingOutbound.size_approx() << " pending#: "<<pendingInbound.size_approx();
@@ -170,7 +170,7 @@ void workunitHandler() {
         std::ofstream dump(autosave1, std::ios::binary);
         dumpf(dump, "dumpTree");
         dump.flush(); dump.close();
-        std::stringstream res2; res2 << "autosaved to "<<autosave1;
+        std::ostringstream res2; res2 << "autosaved to "<<autosave1;
         swap(autosave1, autosave2);
         adminConsoleHandler_queue.enqueue({1, 0, res2.str()});
       }
@@ -210,14 +210,14 @@ void adminConsoleHandler() {
         continue; // bizarre
       mgr = adminConnections[nx.conn_id];
     }
-    std::stringstream s(nx.message);
+    std::istringstream s(nx.message);
     std::string com; s>>com;
     if(com == "help") {
       woker(mgr, nx.conn_id, {1, "commands: remoteclose connstats init loadsave dumpsave treestats"});
     } else if(com == "remoteclose") {
       woker(mgr, nx.conn_id, {3, "bye"});
     } else if(com == "connstats") {
-      std::stringstream f;
+      std::ostringstream f;
       std::vector<uint64_t> latencies, uptimes;
       { const std::lock_guard<std::mutex> lock(workerConnections_mutex);
         for(auto& [conn, m]:workerConnections) latencies.push_back(m.latency), uptimes.push_back(m.uptime);
@@ -230,7 +230,7 @@ void adminConsoleHandler() {
       woker(mgr, nx.conn_id, {1, f.str()});
     } else if(com == "init") {
       std::ifstream _f("initform.html");
-      std::stringstream f; f << _f.rdbuf();
+      std::ostringstream f; f << _f.rdbuf();
       woker(mgr, nx.conn_id, {1, f.str()});
     } else if(com == "actual-init") {
 //       const std::lock_guard<std::mutex> lock(searchtree_mutex);
@@ -336,7 +336,7 @@ void adminConsoleHandler() {
     } else if(com == "treestats") {
       woker(mgr, nx.conn_id, {1, "crunching tree stats..."});
       // const std::lock_guard<std::mutex> lock(searchtree_mutex);
-      // std::stringstream fx;
+      // std::ostringstream fx;
       // int maxdep = 0, dup = 0;
       // std::vector<std::pair<int, std::string>> conIdx;
       // for(auto s:contributors) conIdx.push_back({0, s});
@@ -470,14 +470,13 @@ void fn(mg_connection* c, int ev, void* ev_data) {
     } else if(mg_match(hm->uri, mg_str("/getconfig"), NULL)) {
       // GET
       // v2: merge with /getwork
-      std::stringstream res;
+      std::ostringstream res;
       /* TODO */
       mg_http_reply(c, 200, "Content-Type: text/raw\n", "%s", res.str().c_str());
     } else if(mg_match(hm->uri, mg_str("/keepalive"), NULL)) {
       // POST request, should contain three parameters: websocket id & ephemerality & amount
       // returns amount * [workunit identifier]
-      std::stringstream co(_mg_str_to_stdstring(hm->body));
-      std::stringstream res;
+      std::istringstream co(_mg_str_to_stdstring(hm->body));
       unsigned long wsid=0;
       co >> wsid;
       workerHandler_queue.enqueue({0, wsid, mg_millis()});
@@ -488,7 +487,7 @@ void fn(mg_connection* c, int ev, void* ev_data) {
     } else if(mg_match(hm->uri, mg_str("/getwork"), NULL)) {
       // POST request, should contain three parameters: websocket id & ephemerality & amount
       // returns amount * [workunit identifier]
-      std::stringstream co(_mg_str_to_stdstring(hm->body));
+      std::istringstream co(_mg_str_to_stdstring(hm->body));
       std::ostringstream res(std::ios::binary);
       unsigned long wsid=0;
       co >> wsid;
@@ -510,14 +509,12 @@ void fn(mg_connection* c, int ev, void* ev_data) {
         // int cnt = std::min(amnt, (int)pendingOutbound.size());
         writeInt(nodes.size(), res);
         for(auto& pom:nodes) {
-          // pendingInbound.enqueue({pom.id, wsid, 's', "", {}});
-          // res<<pom.id<<' '<<pom.depth;
-          // for(uint64_t x:pom.rows) res<<' '<<x;
-          // res << '\n';
-          /* TODO */
+          pendingInbound.enqueue({pom, wsid, 's', "", {}}); // TOFIX
+          writeString(pendingInboundCache.get(pom), res);
         }
       }
       workerHandler_queue.enqueue({0, wsid, mg_millis()});
+      // std::cerr << res.str().size() << '\n';
       mg_http_reply(c, 200, "Content-Type: text/binary\n", "%.*s", (int)res.str().size(), res.str().data());
       // TODO update for binary, send 501 for no more work temporarily
       // if(co.fail())
@@ -528,7 +525,7 @@ void fn(mg_connection* c, int ev, void* ev_data) {
       // POST request, should contain amount, websocket connection id
       // then amount times the following: workunit id, status - 0 or 1
       // if status is 1, further contain contributor id and all children
-      std::stringstream co(_mg_str_to_stdstring(hm->body), std::ios::binary);
+      std::istringstream co(_mg_str_to_stdstring(hm->body), std::ios::binary);
       int amnt;
       readInt(amnt, co);
       unsigned long wsid;
@@ -552,11 +549,8 @@ void fn(mg_connection* c, int ev, void* ev_data) {
         }
       }
       workerHandler_queue.enqueue({0, wsid, mg_millis()});
-      if(co.fail()) {
-        
-      }
-      else
-        mg_http_reply(c, 200, "Content-Type: text/raw\n", "OK");
+      if(co.fail()) goto fail;
+      mg_http_reply(c, 200, "Content-Type: text/raw\n", "OK");
       return;
       fail:
       std::cerr << "returnwork failed" << std::endl;

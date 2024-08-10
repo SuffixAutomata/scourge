@@ -5,6 +5,8 @@
 #include <vector>
 #include <ranges>
 #include <cassert>
+#include <map>
+#include <algorithm>
 #include <type_traits>
 
 #define sz(x) ((int)(x.size()))
@@ -91,6 +93,7 @@ std::vector<uint64_t> arithmeticEncode(const std::vector<uint64_t>& vals, const 
 
 template<typename T>
 void writeInt(T x, std::ostream& f) {
+  assert(f.out);
   char y;
   while(x >= 128) {
     y = (x & 127) | 128;
@@ -102,6 +105,7 @@ void writeInt(T x, std::ostream& f) {
 }
 
 void writeString(const std::string& x, std::ostream& f) {
+  assert(f.out);
   // x may be binary
   writeInt(x.size(), f);
   f.write(x.data(), x.size());
@@ -109,6 +113,7 @@ void writeString(const std::string& x, std::ostream& f) {
 
 template<typename T>
 void readInt(T& x, std::istream& f) {
+  assert(f.in);
   x = 0;
   char y = -128;
   int s = 0;
@@ -120,6 +125,7 @@ void readInt(T& x, std::istream& f) {
 }
 
 void readString(std::string& x, std::istream& f, size_t maxlen=10000000) {
+  assert(f.in);
   // x may be binary
   size_t s;
   readInt(s, f);
