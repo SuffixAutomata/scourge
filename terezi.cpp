@@ -130,7 +130,7 @@ void workunitHandler() {
             // if(checkduplicate(onx))
             //   tree[onx].state = '2';
             std::ostringstream c(std::ios::binary);
-            dumpf(c, "dumpWorkunit");
+            dumpf(c, "dumpWorkunit", idx);
             pendingOutboundCache.set(idx, c.str());
             addPendingOutbound.push_back(idx);
             // emit(onx, Compl3t34bl3(getState(onx), tree[onx].depth, tree[onx].depth%p)); // TODO
@@ -233,80 +233,91 @@ void adminConsoleHandler() {
       std::ostringstream f; f << _f.rdbuf();
       woker(mgr, nx.conn_id, {1, f.str()});
     } else if(com == "actual-init") {
-//       const std::lock_guard<std::mutex> lock(searchtree_mutex);
-//       std::string options;
-//       if(treeSize != 0) {
-//         woker(mgr, nx.conn_id, {1, "failed, tree is already initialized"});
-//         goto fail;
-//       }
+      // P W SYM L4H BTH
+      const std::lock_guard<std::mutex> lock(searchtree_mutex);
+      std::string options;
+      if(tree.treeSize != 0) {
+        woker(mgr, nx.conn_id, {1, "failed, tree is already initialized"});
+        goto fail;
+      }
 //       // TODO: assumes stator = 0
-//       s >> p >> width >> sym >> l4h;
-//       if(sym != 0 && sym != 1) {
-//         woker(mgr, nx.conn_id, {1, "failed, unsupported symmetry"});
-//         continue;
-//       }
-//       for (int i = 0; i < 2 * p; i++) {
-//         uint64_t x = 0; std::string row;
-//         s >> row;
-//         if(sz(row) != width)  {
-//           woker(mgr, nx.conn_id, {1, "failed, bad row length"});
-//           goto fail;
-//         }
-//         for (int j = 0; j < width; j++)
-//           if (row[j] == 'o')
-//             x |= (1ull << j);
-// // struct node { uint64_t row; int depth, shift, parent, contrib; char state; };
-//         tree[newNode()]={x, short(i+1), 0, i-1, 0, 'd'};
-//       } s>>options;
-//       if (options[0] == 'y' || options[0] == 'Y') {
-//         int filterrows; s>>filterrows;
-//         for (int i = 0; i < filterrows; i++) {
-//           uint64_t x = 0; std::string filter; s >> filter;
-//           if(sz(filter) != width) {
-//             woker(mgr, nx.conn_id, {1, "failed, bad filter length, must be w"});
-//             goto fail;
-//           }
-//           for (int j = 0; j < width; j++)
-//             if (filter[j] == 'o')
-//               x |= (1ull << j);
-//           filters.push_back(x);
-//         }
-//         for(int idx=0; idx<2; idx++){
-//           int cnt; s>>cnt;
-//           leftborder[idx] = std::vector<uint64_t>(cnt);
-//           for(int i=0; i<cnt; i++){
-//             std::string t; s>>t;
-//             if(sz(t) != p)  {
-//               woker(mgr, nx.conn_id, {1, "failed, bad fix length, must be p"});
-//               goto fail;
-//             }
-//             for(int j=0; j<p; j++) if(t[j] == 'o') leftborder[idx][i] |= (1ull << j);
-//           }
-//         }
-//         exInitrow = std::vector<uint64_t>(2*p);
-//         for(int i=0; i<2*p; i++) {
-//           uint64_t x = 0; std::string row;
-//           s >> row;
-//           if(sz(row) != width)  {
-//             woker(mgr, nx.conn_id, {1, "failed, bad row length"});
-//             goto fail;
-//           }
-//           for (int j = 0; j < width; j++)
-//             if (row[j] == 'o')
-//               x |= (1ull << j);
-//           exInitrow[i] = x;
-//         }
-//       }
-//       assert(treeSize == 2*p);
+      s >> p >> width >> sym >> l4h >> bthh;
+      calculateMasks(bthh);
+      if(sym != 0 && sym != 1) {
+        woker(mgr, nx.conn_id, {1, "failed, unsupported symmetry"});
+        continue;
+      }
+      for (int i = 0; i < 2 * p; i++) {
+        uint64_t x = 0; std::string row;
+        s >> row;
+        if(sz(row) != width)  {
+          woker(mgr, nx.conn_id, {1, "failed, bad row length"});
+          goto fail;
+        }
+        for (int j = 0; j < width; j++)
+          if (row[j] == 'o')
+            x |= (1ull << j);
+        int ff = tree.newNode({CENTER_ID(x), // Center
+                      i+1, // Depth
+                      (i == 2*p-1) ? TAG_QUEUED : 0, // No tags
+                      i-1, // Ascendant
+                     }, {{{SIDE0_ID(x), 0}}, {{SIDE1_ID(x), 0}}});
+        // tree[newNode()]={x, short(i+1), 0, i-1, 0, 'd'};
+      } s>>options;
+      if (options[0] == 'y' || options[0] == 'Y') {
+        int filterrows; s>>filterrows;
+        for (int i = 0; i < filterrows; i++) {
+          uint64_t x = 0; std::string filter; s >> filter;
+          if(sz(filter) != width) {
+            woker(mgr, nx.conn_id, {1, "failed, bad filter length, must be w"});
+            goto fail;
+          }
+          for (int j = 0; j < width; j++)
+            if (filter[j] == 'o')
+              x |= (1ull << j);
+          filters.push_back(x);
+        }
+        for(int idx=0; idx<2; idx++){
+          int cnt; s>>cnt;
+          leftborder[idx] = std::vector<uint64_t>(cnt);
+          for(int i=0; i<cnt; i++){
+            std::string t; s>>t;
+            if(sz(t) != p)  {
+              woker(mgr, nx.conn_id, {1, "failed, bad fix length, must be p"});
+              goto fail;
+            }
+            for(int j=0; j<p; j++) if(t[j] == 'o') leftborder[idx][i] |= (1ull << j);
+          }
+        }
+        exInitrow = std::vector<uint64_t>(2*p);
+        for(int i=0; i<2*p; i++) {
+          uint64_t x = 0; std::string row;
+          s >> row;
+          if(sz(row) != width)  {
+            woker(mgr, nx.conn_id, {1, "failed, bad row length"});
+            goto fail;
+          }
+          for (int j = 0; j < width; j++)
+            if (row[j] == 'o')
+              x |= (1ull << j);
+          exInitrow[i] = x;
+        }
+      }
+      assert(tree.treeSize == 2*p);
 //       tree[2*p-1].state = 'q';
-//       pendingOutbound.enqueue(genPOM(2*p-1));
+      {
+        std::ostringstream c(std::ios::binary);
+        dumpf(c, "dumpWorkunit", 2*p-1);
+        pendingOutboundCache.set(2*p-1, c.str());
+        pendingOutbound.enqueue(2*p-1);
+        woker(mgr, nx.conn_id, {1, "successfully parsed input:\n<pre><code>" + nx.message.substr(12)+"</code></pre>"});
+      }
 //       if(s.fail()) {
 //         treeSize = 0;
 //         woker(mgr, nx.conn_id, {1, "unknown parsing failure"});
 //         goto fail;
 //       }
-//       woker(mgr, nx.conn_id, {1, "successfully parsed input:\n<pre><code>" + nx.message.substr(12)+"</code></pre>"});
-//       fail:;
+      fail:;
     } else if (com == "loadsave") {
       const std::lock_guard<std::mutex> lock(searchtree_mutex);
       if(tree.treeSize != 0) {
