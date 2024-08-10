@@ -485,7 +485,7 @@ void fn(mg_connection* c, int ev, void* ev_data) {
       id++;
       std::ostringstream res; res << id;
       mg_http_reply(c, 200, "Content-Type: text/raw\n", "%s", res.str().c_str());
-    } else if(mg_match(hm->uri, mg_str("/keepalive"), NULL)) {
+    } else if(mg_match(hm->uri, mg_str("/trickle"), NULL)) {
       // POST request, should contain three parameters: websocket id & ephemerality & amount
       // returns amount * [workunit identifier]
       std::istringstream co(_mg_str_to_stdstring(hm->body));
