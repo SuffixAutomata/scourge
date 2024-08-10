@@ -518,7 +518,7 @@ void fn(mg_connection* c, int ev, void* ev_data) {
         }
       }
       workerHandler_queue.enqueue({0, wsid, mg_millis()});
-      mg_http_reply(c, 200, "Content-Type: text/binary\n", "%.*s", (int)res.str().size(), res.str().c_str());
+      mg_http_reply(c, 200, "Content-Type: text/binary\n", "%.*s", (int)res.str().size(), res.str().data());
       // TODO update for binary, send 501 for no more work temporarily
       // if(co.fail())
       //   mg_http_reply(c, 200, "Content-Type: text/raw\n", "-1");
@@ -540,9 +540,9 @@ void fn(mg_connection* c, int ev, void* ev_data) {
         if(status == 0)
           pendingInbound.enqueue({id, wsid, 'u', "", {}}); // tofix
         else {
-          int nexlen; readInt(nexlen, co);
-          assert(0 <= nexlen && nexlen <= 1000000); // tofix
-          std::string v; co.read(v.data(), nexlen);
+          std::string v;
+          readString(v, co);
+          if(co.fail()) goto fail;
           pendingInboundCache.set(id, v);
           // std::string cid; co >> cid;
           // int ch; co >> ch;
@@ -553,11 +553,14 @@ void fn(mg_connection* c, int ev, void* ev_data) {
       }
       workerHandler_queue.enqueue({0, wsid, mg_millis()});
       if(co.fail()) {
-        std::cerr << "returnwork failed: " << _mg_str_to_stdstring(hm->body) << std::endl;
-        mg_http_reply(c, 200, "Content-Type: text/raw\n", "FAIL");
+        
       }
       else
         mg_http_reply(c, 200, "Content-Type: text/raw\n", "OK");
+      return;
+      fail:
+      std::cerr << "returnwork failed" << std::endl;
+      mg_http_reply(c, 200, "Content-Type: text/raw\n", "FAIL");
     } 
     /* ?? */
     else {

@@ -101,6 +101,12 @@ void writeInt(T x, std::ostream& f) {
   f.write(&y, 1);
 }
 
+void writeString(const std::string& x, std::ostream& f) {
+  // x may be binary
+  writeInt(x.size(), f);
+  f.write(x.data(), x.size());
+}
+
 template<typename T>
 void readInt(T& x, std::istream& f) {
   x = 0;
@@ -112,6 +118,19 @@ void readInt(T& x, std::istream& f) {
     s += 7;
   }
 }
+
+void readString(std::string& x, std::istream& f, size_t maxlen=10000000) {
+  // x may be binary
+  size_t s;
+  readInt(s, f);
+  if(s > maxlen) {
+    f.setstate(std::ios::failbit);
+    return;
+  }
+  x.resize(s);
+  f.read(x.data(), s);
+}
+
 
 void arithWriteToStream(const std::vector<uint64_t>& vals, const std::vector<uint64_t>& maxvals, std::ostream& f) {
   assert(f.binary);
