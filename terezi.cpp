@@ -122,9 +122,11 @@ void workunitHandler() {
         if(x.state == 'c') {
           // tree[x.id].state = 'd'; // do not update, loadWorkUnitResponse already does that
           std::istringstream b(pendingInboundCache.get(x.id), std::ios::binary);
+          int cid = tree.contributorIDs[x.contributor];
           pendingInboundCache.erase(x.id);
           int oldTreeSize = tree.treeSize;
           loadf(b, "loadWorkunitResponse");
+          tree.a[x.id].cid = cid;
           for(int idx=oldTreeSize; idx<tree.treeSize; idx++) {
             // tree.a[idx].tags |= TAG_QUEUED; // No need either, dumpf does it
             // if(checkduplicate(onx))
@@ -304,7 +306,6 @@ void adminConsoleHandler() {
         }
       }
       assert(tree.treeSize == 2*p);
-//       tree[2*p-1].state = 'q';
       {
         std::ostringstream c(std::ios::binary);
         dumpf(c, "dumpWorkunit", 2*p-1);
@@ -312,11 +313,11 @@ void adminConsoleHandler() {
         pendingOutbound.enqueue(2*p-1);
         woker(mgr, nx.conn_id, {1, "successfully parsed input:\n<pre><code>" + nx.message.substr(12)+"</code></pre>"});
       }
-//       if(s.fail()) {
-//         treeSize = 0;
-//         woker(mgr, nx.conn_id, {1, "unknown parsing failure"});
-//         goto fail;
-//       }
+      if(s.fail()) {
+        woker(mgr, nx.conn_id, {1, "unknown parsing failure"});
+        exit(0);
+        // goto fail;
+      }
       fail:;
     } else if (com == "loadsave") {
       const std::lock_guard<std::mutex> lock(searchtree_mutex);
@@ -330,8 +331,10 @@ void adminConsoleHandler() {
         for(int i=0; i<tree.treeSize; i++)
           if(tree.a[i].tags & TAG_QUEUED) {
             cnt++;
-            // TODO: init queue state
-            // pendingOutbound.enqueue(genPOM(i));
+            std::ostringstream c(std::ios::binary);
+            dumpf(c, "dumpWorkunit", i);
+            pendingOutboundCache.set(i, c.str());
+            pendingOutbound.enqueue(i);
           }
         woker(mgr, nx.conn_id, {1, "loaded " + std::to_string(tree.treeSize) + " nodes from "+fn+
         " and queued "+std::to_string(cnt)+" nodes"});
@@ -341,8 +344,7 @@ void adminConsoleHandler() {
       std::string fn; s>>fn;
       std::ofstream dump(fn, std::ios::binary);
       dumpf(dump, "loadTree");
-      // dumpTree(fn);
-      // // TODO: NE node process here
+      // TODO: Nonephemeral node process here
       woker(mgr, nx.conn_id, {1, "saved " + std::to_string(tree.treeSize) + " nodes to "+fn});
     } else if(com == "treestats") {
       woker(mgr, nx.conn_id, {1, "crunching tree stats..."});
@@ -478,11 +480,10 @@ void fn(mg_connection* c, int ev, void* ev_data) {
         sv = mg_str(oscillatorComplete.c_str());
         mg_ws_send(c, sv.buf, sv.len, WEBSOCKET_OP_TEXT);
       }
-    } else if(mg_match(hm->uri, mg_str("/getconfig"), NULL)) {
-      // GET
-      // v2: merge with /getwork
-      std::ostringstream res;
-      /* TODO */
+    } else if(mg_match(hm->uri, mg_str("/getuniqueid"), NULL)) {
+      static unsigned long id = 0;
+      id++;
+      std::ostringstream res; res << id;
       mg_http_reply(c, 200, "Content-Type: text/raw\n", "%s", res.str().c_str());
     } else if(mg_match(hm->uri, mg_str("/keepalive"), NULL)) {
       // POST request, should contain three parameters: websocket id & ephemerality & amount
@@ -495,7 +496,7 @@ void fn(mg_connection* c, int ev, void* ev_data) {
         mg_http_reply(c, 500, "Content-Type: text/raw\n", "");
       else
         mg_http_reply(c, 200, "Content-Type: text/raw\n", "OK");
-    } else if(mg_match(hm->uri, mg_str("/getwork"), NULL)) {
+    } else if(mg_match(hm->uri, mg_str("/getwork"), NULL)) { // getconfig merged into getwork
       // POST request, should contain three parameters: websocket id & ephemerality & amount
       // returns amount * [workunit identifier]
       std::istringstream co(_mg_str_to_stdstring(hm->body));
@@ -520,7 +521,7 @@ void fn(mg_connection* c, int ev, void* ev_data) {
         // int cnt = std::min(amnt, (int)pendingOutbound.size());
         writeInt(nodes.size(), res);
         for(auto& pom:nodes) {
-          pendingInbound.enqueue({pom, wsid, 's', "", {}}); // TOFIX
+          pendingInbound.enqueue({pom, wsid, 's', ""});
           writeString(pendingInboundCache.get(pom), res);
         }
       }
@@ -542,11 +543,13 @@ void fn(mg_connection* c, int ev, void* ev_data) {
       unsigned long wsid;
       readInt(wsid, co);
       for(int i=0; i<amnt; i++) {
+        std::string cid;
         int id=0, status=0;
         readInt(id, co);
         readInt(status, co);
+        readString(cid, co);
         if(status == 0)
-          pendingInbound.enqueue({id, wsid, 'u', "", {}}); // tofix
+          pendingInbound.enqueue({id, wsid, 'u', ""}); // tofix
         else {
           std::string v;
           readString(v, co);
@@ -556,7 +559,7 @@ void fn(mg_connection* c, int ev, void* ev_data) {
           // int ch; co >> ch;
         //   std::vector<uint64_t> rows(ch);
           // for(int i=0; i<ch; i++) co >> rows[i];
-          pendingInbound.enqueue({id, wsid, 'c', cid, rows}); // tofix
+          pendingInbound.enqueue({id, wsid, 'c', cid}); // tofix
         }
       }
       workerHandler_queue.enqueue({0, wsid, mg_millis()});

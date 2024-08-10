@@ -23,9 +23,9 @@ struct node {
   int asc, ch[4]; // 32*5bits
   int n[2]; // 32*2bits
   halfrow* h[2]; // 64*2bits
-  // TODO: contributor stats
-  node(uint8_t v=0, short depth=0, int tags=0, int asc=0) 
-    : v(v), depth(depth), tags(tags), asc(asc) {
+  int cid; // 32bits
+  node(uint8_t v=0, short depth=0, int tags=0, int asc=0, int cid=0) 
+    : v(v), depth(depth), tags(tags), asc(asc), cid(cid) {
     ch[0] = ch[1] = ch[2] = ch[3] = 0;
     n[0] = n[1] = 0;
     h[0] = h[1] = nullptr;
@@ -45,9 +45,10 @@ struct node {
     }
     arithWriteToStream({(uint64_t)id, (uint64_t)v, (uint64_t)std::max(0,asc), (uint64_t)tags, 
                         (uint64_t)rowlis[0].size(), (uint64_t)n[0], (uint64_t)maxasc[0],
-                        (uint64_t)rowlis[1].size(), (uint64_t)n[1], (uint64_t)maxasc[1]},
+                        (uint64_t)rowlis[1].size(), (uint64_t)n[1], (uint64_t)maxasc[1],
+                        (uint64_t)cid},
                         {1ull<<32, 1ull<<8, 1ull<<32, 1ull<<32, 1ull<<32, 1ull<<32, 1ull<<32,
-                         1ull<<32, 1ull<<32, 1ull<<32}, f);
+                         1ull<<32, 1ull<<32, 1ull<<32, 1ull<<32}, f);
     std::vector<uint64_t> vals, maxvals;
     uint64_t cksum = id + asc;
     for(int x=0; x<2; x++) {
@@ -65,12 +66,13 @@ struct node {
   uint64_t load(int& id, std::istream& f) {
     std::vector<uint64_t> header;
     arithReadFromStream(header, {1ull<<32, 1ull<<8, 1ull<<32, 1ull<<32, 1ull<<32, 1ull<<32, 1ull<<32,
-                         1ull<<32, 1ull<<32, 1ull<<32}, f);
+                         1ull<<32, 1ull<<32, 1ull<<32, 1ull<<32}, f);
     id = header[0];
     v = header[1], asc = header[2], tags = header[3];
     if(id == 0 && asc == 0)
       asc = -1;
     n[0] = header[5], n[1] = header[8];
+    cid = header[10];
     int maxasc[2] = {(int)header[6], (int)header[9]}, rowlisSize[2] = {(int)header[4], (int)header[7]};
     std::vector<uint64_t> vals, maxvals;
     for(int x=0; x<2; x++) {
@@ -112,6 +114,7 @@ struct searchTree {
   int depths[1000];
   int depthcnt[1000];
   int treeSize = 0;
+  std::vector<std::string> contributors; std::map<std::string, int> contributorIDs;
   searchTree() { a = new node[treeAlloc]; }
   ~searchTree() { delete[] a; }
   uint64_t dumpTree(std::ostream &f) {
@@ -120,6 +123,9 @@ struct searchTree {
     uint64_t cksum = 0;
     for (int i = 0; i < treeSize; i++) 
       cksum ^= a[i].dump(i, f);
+    writeInt(contributors.size(), f);
+    for(auto s:contributors)
+      writeString(s, f);
     f.write("pyrope", 6);
     return cksum;
   }
@@ -144,6 +150,11 @@ struct searchTree {
           cnt[x] += a[i].n[x];
       a[i].depth = 1 + (i ? a[a[i].asc].depth : 0);
     }
+    int cs;
+    readInt(cs, f);
+    contributors = std::vector<std::string>(cs);
+    for(int i=0; i<cs; i++)
+      readString(contributors[i], f), contributorIDs[contributors[i]] = i;
     f.read(buf.data(), 6);
     assert(buf == "pyrope");
     WARN << "LO4D3D " << treeSize << " NOD3S 4ND " << cnt[0] << "+" << cnt[1] << " ROWS\n";
