@@ -117,7 +117,7 @@ struct searchTree {
   std::vector<std::string> contributors; std::map<std::string, int> contributorIDs;
   searchTree() { a = new node[treeAlloc]; }
   ~searchTree() { delete[] a; }
-  uint64_t dumpTree(std::ostream &f) {
+  uint64_t dumpTree(std::ostream &f) const {
     f.write("terezi", 6);
     writeInt(treeSize, f);
     uint64_t cksum = 0;
@@ -163,38 +163,37 @@ struct searchTree {
     }
     return cksum;
   }
-
-  // uint64_t loadWorkUnit(std::ifstream &f) {
-  //   for (int i = 0; i < 1000; i++)
-  //     depthcnt[i] = depths[i] = 0;
-  //   std::string buf(6, 0);
-  //   f.read(buf.data(), 6);
-  //   assert(buf == "terezi");
-  //   readInt(wu_onx, f);
-  //   readInt(treeSize, f);
-  //   assert(treeSize == 2 * p);
-  //   std::vector<int> depthShit(2*p);
-  //   for(int i=0; i<2*p; i++) readInt(depthShit[i], f);
-  //   uint64_t cksum = 0;
-  //   for (int i = 0; i < treeSize; i++) {
-  //     int ii;
-  //     cksum ^= a[i].load(ii, f);
-  //     partialLoadOriginalNodeid[i] = ii;
-  //     partialLoadNewNodeid[ii] = i;
-  //     a[i].ch[0] = a[i].ch[1] = a[i].ch[2] = a[i].ch[3] = -1;
-  //     if (i) {
-  //       assert(partialLoadNewNodeid[a[i].asc] == i-1);
-  //       a[i].asc = i-1;
-  //       a[a[i].asc].ch[a[i].v] = i;
-  //     } else a[i].asc = -1;
-  //     a[i].depth = depthShit[i];
-  //   }
-  //   f.read(buf.data(), 6);
-  //   assert(buf == "pyrope");
-  //   assert(partialLoadOriginalNodeid[2*p-1] == wu_onx);
-  //   return cksum;
-  // }
-  uint64_t dumpWorkUnit(std::ostream &f, int onx) {
+  uint64_t loadWorkUnit(std::istream &f) {
+    for (int i = 0; i < 1000; i++)
+      depthcnt[i] = depths[i] = 0;
+    std::string buf(6, 0);
+    f.read(buf.data(), 6);
+    assert(buf == "terezi");
+    readInt(wu_onx, f);
+    readInt(treeSize, f);
+    assert(treeSize == 2 * p);
+    std::vector<int> depthShit(2*p);
+    for(int i=0; i<2*p; i++) readInt(depthShit[i], f);
+    uint64_t cksum = 0;
+    for (int i = 0; i < treeSize; i++) {
+      int ii;
+      cksum ^= a[i].load(ii, f);
+      partialLoadOriginalNodeid[i] = ii;
+      partialLoadNewNodeid[ii] = i;
+      a[i].ch[0] = a[i].ch[1] = a[i].ch[2] = a[i].ch[3] = -1;
+      if (i) {
+        assert(partialLoadNewNodeid[a[i].asc] == i-1);
+        a[i].asc = i-1;
+        a[a[i].asc].ch[a[i].v] = i;
+      } else a[i].asc = -1;
+      a[i].depth = depthShit[i];
+    }
+    f.read(buf.data(), 6);
+    assert(buf == "pyrope");
+    assert(partialLoadOriginalNodeid[2*p-1] == wu_onx);
+    return cksum;
+  }
+  uint64_t dumpWorkUnit(std::ostream &f, int onx) const {
     f.write("terezi", 6);
     writeInt(onx, f);
     writeInt(2*p, f);
@@ -211,16 +210,16 @@ struct searchTree {
     f.write("pyrope", 6);
     return cksum;
   }
-  // uint64_t dumpWorkUnitResponse(std::ofstream &f) {
-  //   f.write("terezi", 6);
-  //   writeInt(wu_onx, f);
-  //   writeInt(treeSize, f);
-  //   uint64_t cksum = 0;
-  //   for (int i = 2*p; i < treeSize; i++) 
-  //     cksum ^= a[i].dump(i, f);
-  //   f.write("pyrope", 6);
-  //   return cksum;
-  // }
+  uint64_t dumpWorkUnitResponse(std::ostream &f) const {
+    f.write("terezi", 6);
+    writeInt(wu_onx, f);
+    writeInt(treeSize, f);
+    uint64_t cksum = 0;
+    for (int i = 2*p; i < treeSize; i++) 
+      cksum ^= a[i].dump(i, f);
+    f.write("pyrope", 6);
+    return cksum;
+  }
   uint64_t loadWorkUnitResponse(std::istream &f) {
     std::string buf(6, 0);
     f.read(buf.data(), 6);
@@ -311,12 +310,11 @@ struct searchTree {
       bito |= x;
     return 64 - __builtin_clzll(bito) - __builtin_ctzll(bito);
   }
-} tree;
-
+};
 }; // namespace _searchtree
 using namespace _searchtree;
 
-void loadf(std::istream &f, std::string mode) {
+searchTree* loadf(std::istream &f, std::string mode) {
   // BENCHMARK(load)
   readInt(th, f), readInt(l4h, f);
   readInt(p, f), readInt(width, f), readInt(sym, f), readInt(stator, f);
@@ -335,18 +333,20 @@ void loadf(std::istream &f, std::string mode) {
   int eis; readInt(eis, f);
   arithReadFromStream(exInitrow, std::vector<uint64_t>(eis, 1<<p), f);
   uint64_t cksum;
-  if(mode == "loadTree") cksum = tree.loadTree(f);
-  else if(mode == "loadWorkunit") assert(0); //cksum = tree.loadWorkUnit(f);
-  else if(mode == "loadWorkunitResponse") cksum = tree.loadWorkUnitResponse(f);
+  searchTree* tree = new searchTree;
+  if(mode == "loadTree") cksum = tree->loadTree(f);
+  else if(mode == "loadWorkunit") cksum = tree->loadWorkUnit(f);
+  else if(mode == "loadWorkunitResponse") cksum = tree->loadWorkUnitResponse(f);
   else assert(0);
   uint64_t expected_cksum; readInt(expected_cksum, f);
   INFO << "Loaded search tree; checksum " << std::hex << cksum << std::dec << "\n";
   if (cksum != expected_cksum)
     throw std::runtime_error("Checksum mismatch: expected " + std::to_string(expected_cksum) + ", got " + std::to_string(cksum));
   // BENCHMARKEND(load)
+  return tree;
 }
 
-void dumpf(std::ostream &f, std::string mode, int onx = -1) {
+void dumpf(std::ostream &f, std::string mode, const searchTree* tree, int onx = -1) {
   // BENCHMARK(dump)
   writeInt(th, f); writeInt(l4h, f);
   writeInt(p, f); writeInt(width, f); writeInt(sym, f); writeInt(stator, f);
@@ -361,9 +361,9 @@ void dumpf(std::ostream &f, std::string mode, int onx = -1) {
   writeInt(exInitrow.size(), f);
   arithWriteToStream(exInitrow, std::vector<uint64_t>(exInitrow.size(), 1<<p), f);
   uint64_t cksum;
-  if(mode == "dumpTree") cksum = tree.dumpTree(f);
-  else if(mode == "dumpWorkunit") cksum = tree.dumpWorkUnit(f, onx);
-  else if(mode == "dumpWorkunitResponse") assert(0); //cksum = tree.dumpWorkUnitResponse(f);
+  if(mode == "dumpTree") cksum = tree->dumpTree(f);
+  else if(mode == "dumpWorkunit") cksum = tree->dumpWorkUnit(f, onx);
+  else if(mode == "dumpWorkunitResponse") cksum = tree->dumpWorkUnitResponse(f);
   else assert(0);
   writeInt(cksum, f);
   f.flush();
