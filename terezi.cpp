@@ -21,6 +21,7 @@ std::string oscillatorComplete;
 
 Cache pendingOutboundCache;
 moodycamel::BlockingConcurrentQueue<int> pendingOutbound;
+searchTree* T = nullptr;
 
 Cache pendingInboundCache;
 struct pendingInboundMessage {
@@ -118,21 +119,21 @@ void workunitHandler() {
     { const std::lock_guard<std::mutex> lock(searchtree_mutex);
       const std::lock_guard<std::mutex> lock2(workerConnections_mutex);
       for(auto& x:to_process) {
-        if(!(tree.a[x.id].tags & TAG_QUEUED)) continue;
+        if(!(T->a[x.id].tags & TAG_QUEUED)) continue;
         if(x.state == 'c') {
           // tree[x.id].state = 'd'; // do not update, loadWorkUnitResponse already does that
           std::istringstream b(pendingInboundCache.get(x.id), std::ios::binary);
-          int cid = tree.contributorIDs[x.contributor];
+          int cid = T->contributorIDs[x.contributor];
           pendingInboundCache.erase(x.id);
-          int oldTreeSize = tree.treeSize;
+          int oldTreeSize = T->treeSize;
           loadf(b, "loadWorkunitResponse");
-          tree.a[x.id].cid = cid;
-          for(int idx=oldTreeSize; idx<tree.treeSize; idx++) {
+          T->a[x.id].cid = cid;
+          for(int idx=oldTreeSize; idx<T->treeSize; idx++) {
             // tree.a[idx].tags |= TAG_QUEUED; // No need either, dumpf does it
             // if(checkduplicate(onx))
             //   tree[onx].state = '2';
             std::ostringstream c(std::ios::binary);
-            dumpf(c, "dumpWorkunit", idx);
+            dumpf(c, "dumpWorkunit", T, idx);
             pendingOutboundCache.set(idx, c.str());
             addPendingOutbound.push_back(idx);
             // emit(onx, Compl3t34bl3(getState(onx), tree[onx].depth, tree[onx].depth%p)); // TODO
@@ -170,7 +171,7 @@ void workunitHandler() {
       adminConsoleHandler_queue.enqueue({1, 0, res.str()});
       if(idx % 4096 == 0) {
         std::ofstream dump(autosave1, std::ios::binary);
-        dumpf(dump, "dumpTree");
+        dumpf(dump, "dumpTree", T);
         dump.flush(); dump.close();
         std::ostringstream res2; res2 << "autosaved to "<<autosave1;
         swap(autosave1, autosave2);
@@ -238,10 +239,11 @@ void adminConsoleHandler() {
       // P W SYM L4H BTH
       const std::lock_guard<std::mutex> lock(searchtree_mutex);
       std::string options;
-      if(tree.treeSize != 0) {
+      if(T != nullptr) {
         woker(mgr, nx.conn_id, {1, "failed, tree is already initialized"});
         goto fail;
       }
+      T = new searchTree;
 //       // TODO: assumes stator = 0
       s >> p >> width >> sym >> l4h >> bthh;
       calculateMasks(bthh);
@@ -259,7 +261,7 @@ void adminConsoleHandler() {
         for (int j = 0; j < width; j++)
           if (row[j] == 'o')
             x |= (1ull << j);
-        int ff = tree.newNode({CENTER_ID(x), // Center
+        int ff = T->newNode({CENTER_ID(x), // Center
                       i+1, // Depth
                       (i == 2*p-1) ? TAG_QUEUED : 0, // No tags
                       i-1, // Ascendant
@@ -305,10 +307,10 @@ void adminConsoleHandler() {
           exInitrow[i] = x;
         }
       }
-      assert(tree.treeSize == 2*p);
+      assert(T->treeSize == 2*p);
       {
         std::ostringstream c(std::ios::binary);
-        dumpf(c, "dumpWorkunit", 2*p-1);
+        dumpf(c, "dumpWorkunit", T, 2*p-1);
         pendingOutboundCache.set(2*p-1, c.str());
         pendingOutbound.enqueue(2*p-1);
         woker(mgr, nx.conn_id, {1, "successfully parsed input:\n<pre><code>" + nx.message.substr(12)+"</code></pre>"});
@@ -318,64 +320,64 @@ void adminConsoleHandler() {
         exit(0);
         // goto fail;
       }
-      fail:;
+      fail:; delete T;
     } else if (com == "loadsave") {
       const std::lock_guard<std::mutex> lock(searchtree_mutex);
-      if(tree.treeSize != 0) {
+      if(T != nullptr) {
         woker(mgr, nx.conn_id, {1, "failed, tree is already initialized"});
       } else {
         std::string fn; s>>fn;
         std::ifstream dump(fn, std::ios::binary);
-        loadf(dump, "loadTree");
+        T = loadf(dump, "loadTree");
         int cnt = 0;
-        for(int i=0; i<tree.treeSize; i++)
-          if(tree.a[i].tags & TAG_QUEUED) {
+        for(int i=0; i<T->treeSize; i++)
+          if(T->a[i].tags & TAG_QUEUED) { // TOCHECK
             cnt++;
             std::ostringstream c(std::ios::binary);
-            dumpf(c, "dumpWorkunit", i);
+            dumpf(c, "dumpWorkunit", T, i);
             pendingOutboundCache.set(i, c.str());
             pendingOutbound.enqueue(i);
           }
-        woker(mgr, nx.conn_id, {1, "loaded " + std::to_string(tree.treeSize) + " nodes from "+fn+
+        woker(mgr, nx.conn_id, {1, "loaded " + std::to_string(T->treeSize) + " nodes from "+fn+
         " and queued "+std::to_string(cnt)+" nodes"});
       }
     } else if(com == "dumpsave") {
       const std::lock_guard<std::mutex> lock(searchtree_mutex);
       std::string fn; s>>fn;
       std::ofstream dump(fn, std::ios::binary);
-      dumpf(dump, "loadTree");
+      dumpf(dump, "loadTree", T);
       // TODO: Nonephemeral node process here
-      woker(mgr, nx.conn_id, {1, "saved " + std::to_string(tree.treeSize) + " nodes to "+fn});
+      woker(mgr, nx.conn_id, {1, "saved " + std::to_string(T->treeSize) + " nodes to "+fn});
     } else if(com == "treestats") {
       woker(mgr, nx.conn_id, {1, "crunching tree stats..."});
-      // const std::lock_guard<std::mutex> lock(searchtree_mutex);
-      // std::ostringstream fx;
-      // int maxdep = 0, dup = 0;
-      // std::vector<std::pair<int, std::string>> conIdx;
-      // for(auto s:contributors) conIdx.push_back({0, s});
-      // for(int i=0; i<treeSize; i++) {
-      //   maxdep = std::max(maxdep, (int)tree[i].depth);
-      //   dup += (tree[i].state == '2');
-      // }
-      // std::vector<int> ongoing(maxdep+1), total(maxdep+1);
-      // for(int i=0;i<treeSize; i++) {
-      //   total[tree[i].depth]++;
-      //   if(tree[i].state != 'd' && tree[i].state != '2') ongoing[tree[i].depth]++;
-      //   else if(i>=2*p) conIdx[tree[i].contrib].first++;
-      // }
-      // fx << treeSize << " nodes, " << dup << " duplicates<br>";
-      // fx << "max depth "<<maxdep <<"<br>";
-      // fx << "profile";
-      // for(int i=0; i<=maxdep; i++){
-      //   if(ongoing[i])fx<<' '<<ongoing[i]<<'/'<<total[i];
-      //   else fx<<' '<<total[i];
-      // }
-      // fx<<"<br>contributors<br>";
-      // std::sort(conIdx.begin(), conIdx.end()); std::reverse(conIdx.begin(), conIdx.end());
-      // for(auto& [cnt, id]:conIdx)fx<<id<<": "<<cnt<<" nodes<br>";
-      // fx<<longgestPartial;
-      // if(oscillatorComplete.size())fx<<oscillatorComplete;
-      // woker(mgr, nx.conn_id, {1, fx.str()});
+      const std::lock_guard<std::mutex> lock(searchtree_mutex);
+      std::ostringstream fx;
+      int maxdep = 0; //, dup = 0;
+      std::vector<std::pair<int, std::string>> conIdx;
+      for(auto s:T->contributors) conIdx.push_back({0, s});
+      for(int i=0; i<T->treeSize; i++) {
+        maxdep = std::max(maxdep, (int)T->a[i].depth);
+        // dup += (tree[i].state == '2');
+      }
+      std::vector<int> ongoing(maxdep+1), total(maxdep+1);
+      for(int i=0;i<T->treeSize; i++) {
+        total[T->a[i].depth]++;
+        if(T->a[i].tags & TAG_QUEUED) ongoing[T->a[i].depth]++;
+        else if(i>=2*p) conIdx[T->a[i].cid].first++;
+      }
+      fx << T->treeSize << " nodes<br>";//, " << dup << " duplicates<br>";
+      fx << "max depth "<<maxdep <<"<br>";
+      fx << "profile";
+      for(int i=0; i<=maxdep; i++){
+        if(ongoing[i])fx<<' '<<ongoing[i]<<'/'<<total[i];
+        else fx<<' '<<total[i];
+      }
+      fx<<"<br>contributors<br>";
+      std::sort(conIdx.begin(), conIdx.end()); std::reverse(conIdx.begin(), conIdx.end());
+      for(auto& [cnt, id]:conIdx)fx<<id<<": "<<cnt<<" nodes<br>";
+      fx<<longgestPartial;
+      if(oscillatorComplete.size())fx<<oscillatorComplete;
+      woker(mgr, nx.conn_id, {1, fx.str()});
     }
     else {
       woker(mgr, nx.conn_id, {1, "huh?"});

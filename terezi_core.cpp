@@ -224,11 +224,12 @@ int main(int argc, char *argv[]) {
     }
     if (x[0] == 'y' || x[0] == 'Y') {
       std::ifstream f("dump.txt");
-      loadf(f, "dumpTree");
+      T = loadf(f, "dumpTree");
       f.close();
       INFO << "THR34DS, LOOK4H34D: [" << th << ' ' << l4h << "] \n";
       std::cin >> th >> l4h;
     } else {
+      T = new searchTree;
       INFO << "THR34DS, LOOK4H34D: \n";
       std::cin >> th >> l4h;
       INFO << "P3R1OD, W1DTH, SYMM3TRY, ST4TOR W1DTH: \n";

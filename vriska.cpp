@@ -98,6 +98,7 @@ void graceful_exit(mg_mgr* mgr) {
   exit(0);
 }
 
+searchTree* T;
 
 struct A2BUnit { int onx, side, idx; };
 std::queue<A2BUnit> searchQueue;
@@ -109,7 +110,7 @@ std::queue<B2AUnit> backQueue;
 
 int enqTreeNode(int onx) {
   for(int x=0; x<2; x++)
-    for(int j=0; j<tree.a[onx].n[x]; j++)
+    for(int j=0; j<T->a[onx].n[x]; j++)
       searchQueue.push({onx, x, j}), remaining[onx]++;
   staging[onx] = std::vector<std::vector<std::vector<halfrow>>>(4, std::vector<std::vector<halfrow>>(2));
   return onx;
@@ -120,8 +121,8 @@ void betaUniverse() {
   while (searchQueue.size()) {
     nx = searchQueue.front();
     searchQueue.pop();
-    int dep = tree.a[nx.onx].depth;
-    std::vector<uint64_t> h = tree.getState(nx.onx, nx.side, nx.idx);
+    int dep = T->a[nx.onx].depth;
+    std::vector<uint64_t> h = T->getState(nx.onx, nx.side, nx.idx);
     genNextRows(h, dep, l4h, nx.side ? enforce2 : enforce,
                 nx.side ? remember2 : remember, [&](uint64_t x) {
                   backQueue.push({x, dep + 1, nx});
@@ -154,44 +155,51 @@ int main(int argc, char* argv[]) {
       graceful_exit(&mgr);
     // std::cerr << "got a response\n";
     return t_response.message;
-  };  
-  std::istringstream ix(woke_and_wait({0, ""}), std::ios::binary);
-  int v1; readInt(v1, ix);
-  std::string v2; readString(v2, ix);
-  std::cerr << v1 << ' ' << v2 << '\n';
-  std::ostringstream res(std::ios::binary);
-  writeInt(16777216, res);
-  writeString("serket", res);
-  woke_and_wait({1, res.str()});
-  mg_mgr_free(&mgr);
-
-
-
+  };
+  int wsid;
+  {
+    std::istringstream ix(woke_and_wait({0, ""}));
+    ix >> wsid;
+    assert(!ix.fail());
+  }
+  auto actualgetWork = [&]() {
+    int amnt = 0;
+    while(amnt == 0) {
+      std::string v = std::to_string(wsid) + " 1 1";
+      std::istringstream ix(woke_and_wait({1, v}), std::ios::binary);
+      int amnt; readInt(amnt, ix);
+      if(amnt == 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+      }else {
+        assert(amnt == 1);
+        std::string p;
+        readString(p, ix);
+        return p;
+      }
+    }
+  };
   while(1) {
-    // TODO: load file
-    auto t1 = std::chrono::high_resolution_clock::now();
-    // assert(argc == 3);
-    // std::ifstream fin(argv[1], std::ios::binary); // tofix
-    loadf(fin, "loadWorkunit");
-    for (int i = 0; i < tree.treeSize; i++) {
-      if (tree.a[i].n[0] == 0 || tree.a[i].n[1] == 0)
-        tree.a[i].tags &= ~TAG_QUEUED;
-      if (tree.a[i].tags & TAG_QUEUED)
+    std::istringstream ix(actualgetWork(), std::ios::binary);
+    T = loadf(ix, "loadWorkunit");
+    for (int i = 0; i < T->treeSize; i++) {
+      if (T->a[i].n[0] == 0 || T->a[i].n[1] == 0)
+        T->a[i].tags &= ~TAG_QUEUED;
+      if (T->a[i].tags & TAG_QUEUED)
         enqTreeNode(i);
     }
     assert(staging.size() == 1);
     std::queue<int> toEnq;
     auto process = [&](B2AUnit x) {
-      int id = x.fa.onx, depth = tree.a[x.fa.onx].depth + 1;
+      int id = x.fa.onx, depth = T->a[x.fa.onx].depth + 1;
       if (x.response == -1) {
         if(!--remaining[id]) {
           {
             auto& w = staging[id];
             for(int v=0; v<4; v++)
               if(sz(w[v][0]) && sz(w[v][1])) // <- Pruning is reduced to one literal line
-                toEnq.push(tree.newNode({v, depth, TAG_QUEUED, id}, w[v]));
+                toEnq.push(T->newNode({v, depth, TAG_QUEUED, id}, w[v]));
           }
-          tree.a[x.fa.onx].tags &= ~TAG_QUEUED;
+          T->a[x.fa.onx].tags &= ~TAG_QUEUED;
           staging.erase(staging.find(id));
         }
       } else {
@@ -211,7 +219,6 @@ int main(int argc, char* argv[]) {
     // dumpf(fx, "dumpWorkunitResponse");
     // fx.close();
     t2 = std::chrono::high_resolution_clock::now();
-    std::cerr << "success-done " << (t2-t1);
   }
   // std::cerr << tree.treeSize << std::endl;
   // std::cerr << toEnq.size() << std::endl;
