@@ -1,11 +1,14 @@
 // TODO : cycle detection ; drifting rows ; symmetries ; smart stopping ;
 // PRUNING. PRUNING done. cycle detection IMPOSSIBLE now. drifting rows ALSO
 // PROBABLY IMPOSSIBLE
+#ifdef USE_SAT
 #include "cadical/src/cadical.hpp"
+#endif
 #include "cqueue/bcq.h"
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -22,7 +25,11 @@ using std::min;
 #include "debug.h"
 #include "globals.h"
 #include "logic.h"
+#ifdef USE_SAT
 #include "satlogic.h"
+#else
+#include "altlogic.h"
+#endif
 #include "searchtree.h"
 
 searchTree* T;
@@ -102,7 +109,7 @@ void search(int th) {
     staging[onx] = std::vector<std::vector<std::vector<halfrow>>>(4, std::vector<std::vector<halfrow>>(2));
   };
   auto maintainQueue = [&] {
-    while (toEnq.size() && qSize < 8 * th)
+    while (toEnq.size() && qSize < 800 * th)
       enqTreeNode(toEnq.top().second), toEnq.pop();
   };
   auto pushToHeap = [&] (int onx) {
@@ -141,31 +148,40 @@ void search(int th) {
     universes.emplace_back(betaUniverse);
   B2AUnit x;
   auto t1 = std::chrono::high_resolution_clock::now();
+  auto t1x = std::chrono::high_resolution_clock::now();
+  double hrPs = 0; int _lastSolved = 0;
   std::string dump1 = "dump-odd.txt", dump2 = "dump-even.txt";
   auto report = [&] {
-    STATUS << "solved " << solvedNodes << " N (" << solved << " ½rs); ";
-    STATUS << "queued " << vqcnt << "+" << toEnq.size() << " N (" << qSize << "+(" << altQ[0] << "+" << altQ[1] << ") ½rs); total " << T->treeSize << " nodes\n";
-    if (reportidx % 8 == 0) {
-      long long cnt = 0, cnt2 = 0;
-      for(int i=0; i<T->treeSize; i++)
-        cnt += T->a[i].n[0] * T->a[i].n[1], cnt2 += (T->a[i].tags & TAG_QUEUED) ? T->a[i].n[0] * T->a[i].n[1] : 0;
-      STATUS << "depth reached " << sdep << "; " << cnt << " (" << cnt2 << " queued) implied nodes; tree profile";
-      for (int i = 2 * p; i <= sdep; i++) {
-        STATUS << ' ' << T->depths[i] << '/' << T->depthcnt[i];
-        // TODO: better status output here
+    auto t2 = std::chrono::high_resolution_clock::now();
+    std::chrono::nanoseconds diff = t2 - t1x;
+    if (diff.count() > 1 * 1e9) {
+      STATUS << "solved " << solvedNodes << " N (" << solved << " ½rs, ";
+      hrPs = 0.8 * (solved - _lastSolved) + 0.2 * hrPs, _lastSolved = solved;
+      STATUS << std::format("{:.2f}K ½rs/s); ", hrPs/1000);
+      STATUS << "queued " << vqcnt << "+" << toEnq.size() << " N (" << qSize << "+(" << altQ[0] << "+" << altQ[1] << ") ½rs); total " << T->treeSize << " nodes\n";
+      if (reportidx % 8 == 0) {
+        long long cnt = 0, cnt2 = 0;
+        for(int i=0; i<T->treeSize; i++)
+          cnt += T->a[i].n[0] * T->a[i].n[1], cnt2 += (T->a[i].tags & TAG_QUEUED) ? T->a[i].n[0] * T->a[i].n[1] : 0;
+        STATUS << "depth reached " << sdep << "; " << cnt << " (" << cnt2 << " queued) implied nodes; tree profile";
+        for (int i = 2 * p; i <= sdep; i++) {
+          STATUS << ' ' << T->depths[i] << '/' << T->depthcnt[i];
+          // TODO: better status output here
+        }
+        STATUS << '\n';
       }
-      STATUS << '\n';
-      auto t2 = std::chrono::high_resolution_clock::now();
-      std::chrono::nanoseconds diff = t2 - t1;
-      if (diff.count() > 600 * 1e9) {
-        std::ofstream dump(dump1);
-        dumpf(dump, "dumpTree", T);
-        dump.close();
-        swap(dump1, dump2);
-        t1 = t2;
-      }
+      // INFO << "altlogic brq: " << altlogic_brq << '\n';
+      reportidx++;
+      t1x = t2;
     }
-    reportidx++;
+    diff = t2 - t1;
+    if (diff.count() > 30 * 1e9) {
+      std::ofstream dump(dump1);
+      dumpf(dump, "dumpTree", T);
+      dump.close();
+      swap(dump1, dump2);
+      t1 = t2;
+    }
   };
   report();
   while (B2A.wait_dequeue(x), 1) {
@@ -192,8 +208,10 @@ void search(int th) {
         WARN << x.row << ' ' << filters[(depth - 1) / p] << '\n';
         assert(0);
         // cout << "[1NFO] NOD3 1GNOR3D" << endl;
-      } else
+      } else {
+        ++solved;
         staging[id][CENTER_ID(x.row)][x.fa.side].push_back({x.row, x.fa.idx});
+      }
     }
     its++;
     if (its % 8192 == 0)

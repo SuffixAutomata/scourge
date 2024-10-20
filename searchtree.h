@@ -331,7 +331,7 @@ searchTree* loadf(std::istream &f, std::string mode) {
     arithReadFromStream(leftborder[s], std::vector<uint64_t>(sz, 1<<p), f);
   }
   int eis; readInt(eis, f);
-  arithReadFromStream(exInitrow, std::vector<uint64_t>(eis, 1<<p), f);
+  arithReadFromStream(exInitrow, std::vector<uint64_t>(eis, 1<<width), f);
   uint64_t cksum;
   searchTree* tree = new searchTree;
   if(mode == "loadTree") cksum = tree->loadTree(f);
@@ -359,7 +359,7 @@ void dumpf(std::ostream &f, std::string mode, const searchTree* tree, int onx = 
     arithWriteToStream(leftborder[s], std::vector<uint64_t>(leftborder[s].size(), 1<<p), f);
   }
   writeInt(exInitrow.size(), f);
-  arithWriteToStream(exInitrow, std::vector<uint64_t>(exInitrow.size(), 1<<p), f);
+  arithWriteToStream(exInitrow, std::vector<uint64_t>(exInitrow.size(), 1<<width), f);
   uint64_t cksum;
   if(mode == "dumpTree") cksum = tree->dumpTree(f);
   else if(mode == "dumpWorkunit") cksum = tree->dumpWorkUnit(f, onx);
