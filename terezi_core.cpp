@@ -156,7 +156,7 @@ void search(int th) {
     std::chrono::nanoseconds diff = t2 - t1x;
     if (diff.count() > 1 * 1e9) {
       STATUS << "solved " << solvedNodes << " N (" << solved << " ½rs, ";
-      hrPs = 0.8 * (solved - _lastSolved) + 0.2 * hrPs, _lastSolved = solved;
+      hrPs = 0.8 * (solved - _lastSolved)/(diff.count()/1e9) + 0.2 * hrPs, _lastSolved = solved;
       STATUS << std::format("{:.2f}K ½rs/s); ", hrPs/1000);
       STATUS << "queued " << vqcnt << "+" << toEnq.size() << " N (" << qSize << "+(" << altQ[0] << "+" << altQ[1] << ") ½rs); total " << T->treeSize << " nodes\n";
       if (reportidx % 8 == 0) {
@@ -175,7 +175,7 @@ void search(int th) {
       t1x = t2;
     }
     diff = t2 - t1;
-    if (diff.count() > 30 * 1e9) {
+    if (diff.count() > 600 * 1e9) {
       std::ofstream dump(dump1);
       dumpf(dump, "dumpTree", T);
       dump.close();

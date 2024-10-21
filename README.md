@@ -5,6 +5,10 @@ Note.
 (new logic) depth reached 28; 375779067 (282588130 queued) implied nodes; tree profile 0/1 0/1 0/1 0/2 0/8 0/32 0/122 0/112 0/336 0/336 0/504 0/554 0/1059 656/1142 1076/1076
 
 
+(B11) depth reached 32; 188680237458 (154415788797 queued) implied nodes; tree profile 0/1 0/1 0/1 0/3 0/11 0/44 0/118 0/118 0/384 0/164 0/220 0/396 0/419 0/462 0/560 0/1226 0/2223 2739/3492 1319/1319
+
+(B09) depth reached 29; 474216188 (291797678 queued) implied nodes;       tree profile 0/1 0/1 0/1 0/3 0/8 0/32 0/128 0/128 0/320 0/320 0/284 0/637 0/1297 0/1621 2363/2656 512/512
+
 TODO 
 
  - [x] Only dump every 10 minutes
